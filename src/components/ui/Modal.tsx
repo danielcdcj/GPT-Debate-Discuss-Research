@@ -44,10 +44,10 @@ export function Modal({
         onClick={onClose}
       />
       <div
-        className={`relative ${maxWidth} w-full mx-4 bg-slate-800 rounded-xl border border-slate-700 shadow-2xl`}
+        className={`relative ${maxWidth} w-full mx-2 sm:mx-4 max-h-[90vh] sm:max-h-none bg-slate-800 rounded-xl border border-slate-700 shadow-2xl flex flex-col`}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
-          <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-700 shrink-0">
+          <h2 className="text-base sm:text-lg font-semibold text-white truncate pr-2">{title}</h2>
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-slate-700"
@@ -67,7 +67,7 @@ export function Modal({
             </svg>
           </button>
         </div>
-        <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">{children}</div>
+        <div className="px-4 sm:px-6 py-4 overflow-y-auto flex-1">{children}</div>
       </div>
     </div>
   );

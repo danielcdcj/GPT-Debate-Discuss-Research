@@ -21,8 +21,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const roleConfig = getRoleConfig(message);
 
   return (
-    <div className={`flex gap-3 px-4 py-3 ${roleConfig.bg} rounded-lg`}>
-      <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-lg bg-slate-800">
+    <div className={`flex gap-2 sm:gap-3 px-2 sm:px-4 py-2 sm:py-3 ${roleConfig.bg} rounded-lg`}>
+      <div className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-base sm:text-lg bg-slate-800">
         {roleConfig.emoji}
       </div>
       <div className="flex-1 min-w-0">

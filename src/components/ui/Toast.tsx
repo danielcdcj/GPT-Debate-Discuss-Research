@@ -41,11 +41,11 @@ export function ToastContainer() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2">
+    <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-auto z-[100] flex flex-col gap-2">
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`px-4 py-3 rounded-lg border shadow-lg text-sm animate-fade-in ${typeStyles[toast.type]}`}
+          className={`px-4 py-3 rounded-lg border shadow-lg text-sm animate-fade-in max-w-sm ${typeStyles[toast.type]}`}
         >
           {toast.message}
         </div>

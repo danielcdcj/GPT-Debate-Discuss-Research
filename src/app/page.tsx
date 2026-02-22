@@ -52,7 +52,7 @@ export default function Home() {
 
   return (
     <>
-      <div className="h-screen flex overflow-hidden">
+      <div className="h-[100dvh] flex overflow-hidden">
         <Sidebar />
         <ChatPanel />
         <RightPanel />

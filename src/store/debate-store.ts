@@ -59,6 +59,8 @@ interface DebateStoreState {
   rightPanelTab: RightPanelTab;
   expandedMessageId: string | null;
   sidebarCollapsed: boolean;
+  mobileSidebarOpen: boolean;
+  mobileRightPanelOpen: boolean;
 }
 
 interface DebateStoreActions {
@@ -112,6 +114,8 @@ interface DebateStoreActions {
   setRightPanelTab: (tab: RightPanelTab) => void;
   setExpandedMessageId: (id: string | null) => void;
   setSidebarCollapsed: (val: boolean) => void;
+  setMobileSidebarOpen: (val: boolean) => void;
+  setMobileRightPanelOpen: (val: boolean) => void;
 }
 
 type DebateStore = DebateStoreState & DebateStoreActions;
@@ -133,6 +137,8 @@ export const useDebateStore = create<DebateStore>()(
       rightPanelTab: "config",
       expandedMessageId: null,
       sidebarCollapsed: false,
+      mobileSidebarOpen: false,
+      mobileRightPanelOpen: false,
 
       // Auth
       setApiKey: (key) => set({ apiKey: key }),
@@ -185,7 +191,7 @@ export const useDebateStore = create<DebateStore>()(
           activeRoomId: state.activeRoomId === id ? null : state.activeRoomId,
         })),
 
-      setActiveRoom: (id) => set({ activeRoomId: id }),
+      setActiveRoom: (id) => set({ activeRoomId: id, mobileSidebarOpen: false }),
 
       getActiveRoom: () => {
         const state = get();
@@ -385,6 +391,8 @@ export const useDebateStore = create<DebateStore>()(
       setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
       setExpandedMessageId: (id) => set({ expandedMessageId: id }),
       setSidebarCollapsed: (val) => set({ sidebarCollapsed: val }),
+      setMobileSidebarOpen: (val) => set({ mobileSidebarOpen: val, ...(val ? { mobileRightPanelOpen: false } : {}) }),
+      setMobileRightPanelOpen: (val) => set({ mobileRightPanelOpen: val, ...(val ? { mobileSidebarOpen: false } : {}) }),
     }),
     {
       name: "debate-room-storage",

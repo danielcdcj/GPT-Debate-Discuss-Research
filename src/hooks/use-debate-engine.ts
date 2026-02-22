@@ -11,23 +11,17 @@ export function useDebateEngine() {
   const room = rooms.find((r) => r.id === activeRoomId);
   const queueUserMessage = useDebateStore((s) => s.queueUserMessage);
   const setPhase = useDebateStore((s) => s.setPhase);
-  const selectedGuestModel = useDebateStore((s) => s.selectedGuestModel);
   const selectedHostModel = useDebateStore((s) => s.selectedHostModel);
 
   const sendMessage = useCallback(
     async (message: string) => {
       if (!activeRoomId || !room) return;
 
-      if (!selectedHostModel || !selectedGuestModel) {
+      if (!selectedHostModel) {
         showToast(
-          "Please select host and guest models in the Config tab",
+          "Please select a host model in the Config tab",
           "error"
         );
-        return;
-      }
-
-      if (room.guests.length === 0) {
-        showToast("Please add at least one guest in the Guests tab", "error");
         return;
       }
 
@@ -43,8 +37,8 @@ export function useDebateEngine() {
         return;
       }
 
-      // Set phase immediately
-      setPhase(activeRoomId, "GUESTS_RESPONDING");
+      // Host goes first — set phase to HOST_SUMMARIZING
+      setPhase(activeRoomId, "HOST_SUMMARIZING");
 
       try {
         await runDebateRound(activeRoomId, message);
@@ -56,7 +50,7 @@ export function useDebateEngine() {
         setPhase(activeRoomId, "AWAITING_USER");
       }
     },
-    [activeRoomId, room, selectedHostModel, selectedGuestModel, queueUserMessage, setPhase]
+    [activeRoomId, room, selectedHostModel, queueUserMessage, setPhase]
   );
 
   return { sendMessage };

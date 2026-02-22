@@ -153,7 +153,8 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
 
     if (decision.action === "request_research") {
       // Run research, then loop back to host with results
-      if (decision.research_queries?.length) {
+      const researchModelAvailable = store.selectedResearchModel || store.selectedHostModel;
+      if (decision.research_queries?.length && researchModelAvailable) {
         store.setPhase(roomId, "RESEARCH_PHASE");
         const researchSummary = await runResearchPhase(roomId, decision.research_queries);
         currentContext = {
@@ -169,6 +170,24 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
     }
 
     if (decision.action === "present_to_guests") {
+      // Check prerequisites
+      const latestRoom = getStore().rooms.find((r) => r.id === roomId);
+      if (!store.selectedGuestModel || !latestRoom?.guests.length) {
+        // Can't run guests — tell the user
+        getStore().addMessage(roomId, {
+          role: "system",
+          content: !store.selectedGuestModel
+            ? "No guest model selected. Please select a guest model in the Config tab."
+            : "No guests in the room. Please add guests in the Guests tab.",
+          isLoading: false,
+          isStreaming: false,
+          isSummary: false,
+          isError: true,
+        });
+        store.setPhase(roomId, "AWAITING_USER");
+        return;
+      }
+
       // Run guest round, then loop back to host with their responses
       const guestSummary = await runGuestRound(roomId, decision.message);
       if (!guestSummary) {

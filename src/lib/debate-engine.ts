@@ -21,6 +21,9 @@ function getStore() {
   return useDebateStore.getState();
 }
 
+// ─── Main entry point ────────────────────────────────────────────────
+// Called when the user sends a message. The host always goes first.
+
 export async function runDebateRound(roomId: string, userMessage: string) {
   const store = getStore();
   const room = store.rooms.find((r) => r.id === roomId);
@@ -28,12 +31,9 @@ export async function runDebateRound(roomId: string, userMessage: string) {
 
   const apiKey = store.apiKey;
   const hostModel = store.selectedHostModel;
-  const guestModel = store.selectedGuestModel;
-  const researchModel = store.selectedResearchModel;
+  if (!hostModel) return;
 
-  if (!hostModel || !guestModel) return;
-
-  // Add user message
+  // Add user message to chat
   store.addMessage(roomId, {
     role: "user",
     content: userMessage,
@@ -45,279 +45,182 @@ export async function runDebateRound(roomId: string, userMessage: string) {
 
   store.incrementRound(roomId);
 
-  // Phase 1: Guests respond
-  store.setPhase(roomId, "GUESTS_RESPONDING");
+  // Hand off to the host-driven loop.
+  // The host receives the user message and decides what to do.
+  await hostDecisionLoop(roomId, {
+    userMessage,
+    guestSummary: undefined,
+    researchSummary: undefined,
+  });
+}
 
-  const refreshedRoom = getStore().rooms.find((r) => r.id === roomId);
-  if (!refreshedRoom) return;
+// ─── Host decision loop ──────────────────────────────────────────────
+// The host is always in control. It receives new context (user message,
+// guest responses, or research results), decides what happens next, and
+// routes to the appropriate party. This can loop multiple times within
+// a single user turn (e.g. host → guests → host → research → host → user).
 
-  // Build host context for initial prompt to guests
-  const hostMessageForGuests = `New discussion point from the user: "${userMessage}"${
-    refreshedRoom.round > 1
-      ? "\n\nPlease respond considering the discussion so far."
-      : "\n\nPlease share your initial thoughts."
-  }`;
+interface HostContext {
+  userMessage?: string;
+  guestSummary?: string;
+  researchSummary?: string;
+}
 
-  // Fire all guests in parallel
-  const guestPromises = refreshedRoom.guests.map(async (guest) => {
-    const msgId = getStore().addMessage(roomId, {
-      role: "guest",
-      content: "",
-      guestId: guest.id,
-      guestName: guest.name,
-      guestAvatar: guest.avatar,
-      isLoading: true,
+async function hostDecisionLoop(roomId: string, context: HostContext) {
+  const store = getStore();
+  const room = getStore().rooms.find((r) => r.id === roomId);
+  if (!room) return;
+
+  const apiKey = store.apiKey;
+  const hostModel = store.selectedHostModel;
+
+  // Safety: prevent infinite loops
+  const maxIterations = room.config.maxRounds;
+  let iterations = 0;
+
+  let currentContext = { ...context };
+
+  while (iterations < maxIterations) {
+    iterations++;
+
+    // ── Director decides ──
+    store.setPhase(roomId, "HOST_SUMMARIZING");
+
+    const currentRoom = getStore().rooms.find((r) => r.id === roomId);
+    if (!currentRoom) return;
+
+    const directorSystemPrompt = hostDirectorPrompt({
+      topic: currentRoom.topic,
+      config: currentRoom.config,
+      hostMemory: currentRoom.hostMemory,
+      guestSummaries: currentContext.guestSummary,
+      userMessage: currentContext.userMessage,
+      researchSummary: currentContext.researchSummary,
+    });
+
+    let decision: DirectorDecision;
+    try {
+      const directorResponse = await chatCompletion(
+        apiKey,
+        hostModel,
+        [
+          { role: "system", content: directorSystemPrompt },
+          { role: "user", content: "Decide the next action." },
+        ],
+        true,
+        store.preferredProviders[hostModel]
+      );
+      decision = JSON.parse(directorResponse);
+    } catch {
+      // Fallback: ask the user
+      decision = {
+        action: "ask_user",
+        message: "I'd like to hear your thoughts on this. What would you like to explore further?",
+      };
+    }
+
+    // ── Show host message ──
+    store.setPhase(roomId, "HOST_PRESENTING");
+
+    getStore().addMessage(roomId, {
+      role: "host",
+      content: decision.message,
+      isLoading: false,
       isStreaming: false,
       isSummary: false,
       isError: false,
     });
 
-    const systemPrompt = guestResponsePrompt({
-      guestName: guest.name,
-      personality: guest.personality,
-      topic: refreshedRoom.topic,
-      memory: guest.memory,
-      hostMessage: hostMessageForGuests,
+    // Update host memory (fire-and-forget)
+    updateHostMemoryBackground(roomId, {
+      context: currentContext,
+      directorDecision: decision,
     });
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ];
+    // ── Route based on decision ──
 
-    getStore().updateMessage(roomId, msgId, {
-      isLoading: false,
-      isStreaming: true,
-    });
+    if (decision.action === "ask_user" || decision.action === "conclude_round") {
+      // Return control to the user
+      store.setPhase(roomId, "AWAITING_USER");
 
-    return new Promise<{ guestId: string; guestName: string; response: string }>(
-      (resolve, reject) => {
-        streamChatCompletion(
-          apiKey,
-          guestModel,
-          messages,
-          (chunk) => {
-            getStore().appendToMessage(roomId, msgId, chunk);
-          },
-          (fullText) => {
-            getStore().updateMessage(roomId, msgId, {
-              isStreaming: false,
-            });
-            resolve({
-              guestId: guest.id,
-              guestName: guest.name,
-              response: fullText,
-            });
-          },
-          (error) => {
-            getStore().updateMessage(roomId, msgId, {
-              isStreaming: false,
-              isError: true,
-              content: `Error: ${error.message}`,
-            });
-            reject(error);
-          },
-          store.preferredProviders[guestModel]
-        );
+      // Check for queued messages
+      const nextMessage = getStore().dequeueUserMessage(roomId);
+      if (nextMessage) {
+        await runDebateRound(roomId, nextMessage);
       }
-    );
-  });
+      return;
+    }
 
-  let guestResponses: Array<{
-    guestId: string;
-    guestName: string;
-    response: string;
-  }> = [];
+    if (decision.action === "request_research") {
+      // Run research, then loop back to host with results
+      if (decision.research_queries?.length) {
+        store.setPhase(roomId, "RESEARCH_PHASE");
+        const researchSummary = await runResearchPhase(roomId, decision.research_queries);
+        currentContext = {
+          userMessage: undefined,
+          guestSummary: undefined,
+          researchSummary: researchSummary || "Research did not return results.",
+        };
+        continue; // loop back to host
+      }
+      // No queries provided — fall through to ask_user
+      store.setPhase(roomId, "AWAITING_USER");
+      return;
+    }
 
-  try {
-    guestResponses = await Promise.allSettled(guestPromises).then((results) =>
-      results
-        .filter(
-          (r): r is PromiseFulfilledResult<{
-            guestId: string;
-            guestName: string;
-            response: string;
-          }> => r.status === "fulfilled"
-        )
-        .map((r) => r.value)
-    );
-  } catch {
-    // Some guests may have failed, continue with what we have
-  }
+    if (decision.action === "present_to_guests") {
+      // Run guest round, then loop back to host with their responses
+      const guestSummary = await runGuestRound(roomId, decision.message);
+      if (!guestSummary) {
+        // Guests all failed — return to user
+        store.setPhase(roomId, "AWAITING_USER");
+        return;
+      }
+      currentContext = {
+        userMessage: undefined,
+        guestSummary,
+        researchSummary: undefined,
+      };
+      getStore().incrementRound(roomId);
+      continue; // loop back to host
+    }
 
-  if (guestResponses.length === 0) {
+    // Unknown action — stop
     store.setPhase(roomId, "AWAITING_USER");
     return;
   }
 
-  // Phase 2: Host summarizes
-  store.setPhase(roomId, "HOST_SUMMARIZING");
-
-  const guestSummariesText = guestResponses
-    .map((g) => `${g.guestName}: ${g.response}`)
-    .join("\n\n---\n\n");
-
-  // Summarizer: stream summary
-  const summaryMsgId = getStore().addMessage(roomId, {
-    role: "host",
-    content: "",
-    isLoading: true,
-    isStreaming: false,
-    isSummary: true,
-    isError: false,
-  });
-
-  const summarizerMessages: ChatMessage[] = [
-    { role: "system", content: hostSummarizerPrompt(guestSummariesText) },
-    { role: "user", content: "Please summarize the above responses." },
-  ];
-
-  let summaryText = "";
-  try {
-    summaryText = await new Promise<string>((resolve, reject) => {
-      getStore().updateMessage(roomId, summaryMsgId, {
-        isLoading: false,
-        isStreaming: true,
-      });
-      streamChatCompletion(
-        apiKey,
-        hostModel,
-        summarizerMessages,
-        (chunk) => {
-          getStore().appendToMessage(roomId, summaryMsgId, chunk);
-        },
-        (fullText) => {
-          getStore().updateMessage(roomId, summaryMsgId, {
-            isStreaming: false,
-          });
-          resolve(fullText);
-        },
-        (error) => {
-          getStore().updateMessage(roomId, summaryMsgId, {
-            isStreaming: false,
-            isError: true,
-            content: `Error: ${error.message}`,
-          });
-          reject(error);
-        },
-        store.preferredProviders[hostModel]
-      );
-    });
-  } catch {
-    store.setPhase(roomId, "AWAITING_USER");
-    return;
-  }
-
-  // Director: decide next action
-  const currentRoom = getStore().rooms.find((r) => r.id === roomId);
-  if (!currentRoom) return;
-
-  const directorSystemPrompt = hostDirectorPrompt({
-    topic: currentRoom.topic,
-    config: currentRoom.config,
-    hostMemory: currentRoom.hostMemory,
-    guestSummaries: summaryText,
-    userMessage,
-  });
-
-  let decision: DirectorDecision;
-  try {
-    const directorResponse = await chatCompletion(
-      apiKey,
-      hostModel,
-      [
-        { role: "system", content: directorSystemPrompt },
-        { role: "user", content: "Decide the next action." },
-      ],
-      true,
-      store.preferredProviders[hostModel]
-    );
-    decision = JSON.parse(directorResponse);
-  } catch {
-    // Fallback: present to guests
-    decision = {
-      action: "present_to_guests",
-      message: summaryText,
-    };
-  }
-
-  // Phase 3: Handle director decision
-  store.setPhase(roomId, "HOST_PRESENTING");
-
+  // Max iterations reached — stop and return to user
   getStore().addMessage(roomId, {
-    role: "host",
-    content: decision.message,
+    role: "system",
+    content: "Maximum rounds reached for this turn. Returning control to you.",
     isLoading: false,
     isStreaming: false,
     isSummary: false,
     isError: false,
   });
-
-  // Handle research if requested
-  if (
-    decision.action === "request_research" &&
-    decision.research_queries?.length &&
-    researchModel
-  ) {
-    store.setPhase(roomId, "RESEARCH_PHASE");
-    await runResearchPhase(roomId, decision.research_queries);
-  }
-
-  // Background: update guest memories (fire-and-forget)
-  for (const gr of guestResponses) {
-    updateGuestMemoryBackground(roomId, gr.guestId, gr.guestName, {
-      userMessage,
-      hostSummary: summaryText,
-      ownResponse: gr.response,
-    });
-  }
-
-  // Update host memory (fire-and-forget)
-  updateHostMemoryBackground(roomId, {
-    userMessage,
-    guestSummary: summaryText,
-    directorDecision: decision,
-  });
-
-  // If the director wants to present to guests, run another guest round
-  // using the director's message as the new prompt
-  if (decision.action === "present_to_guests") {
-    const latestRoom = getStore().rooms.find((r) => r.id === roomId);
-    if (latestRoom && latestRoom.round < latestRoom.config.maxRounds) {
-      await runFollowUpRound(roomId, decision.message);
-      return;
-    }
-  }
-
   store.setPhase(roomId, "AWAITING_USER");
-
-  // Check for queued messages
-  const nextMessage = getStore().dequeueUserMessage(roomId);
-  if (nextMessage) {
-    await runDebateRound(roomId, nextMessage);
-  }
 }
 
-/**
- * Runs a follow-up guest round where the host's message is the prompt.
- * Triggered when the Director returns "present_to_guests".
- */
-async function runFollowUpRound(roomId: string, hostMessage: string) {
+// ─── Guest round ─────────────────────────────────────────────────────
+// Fires all guests in parallel, streams their responses, then returns
+// a concatenated summary string for the host.
+
+async function runGuestRound(
+  roomId: string,
+  hostMessage: string
+): Promise<string | null> {
   const store = getStore();
-  const room = store.rooms.find((r) => r.id === roomId);
-  if (!room) return;
+  const room = getStore().rooms.find((r) => r.id === roomId);
+  if (!room) return null;
 
   const apiKey = store.apiKey;
-  const hostModel = store.selectedHostModel;
   const guestModel = store.selectedGuestModel;
+  if (!guestModel) return null;
 
-  store.incrementRound(roomId);
   store.setPhase(roomId, "GUESTS_RESPONDING");
 
-  const refreshedRoom = getStore().rooms.find((r) => r.id === roomId);
-  if (!refreshedRoom) return;
-
-  const guestPromises = refreshedRoom.guests.map(async (guest) => {
+  const guestPromises = room.guests.map(async (guest) => {
     const msgId = getStore().addMessage(roomId, {
       role: "guest",
       content: "",
@@ -333,7 +236,7 @@ async function runFollowUpRound(roomId: string, hostMessage: string) {
     const systemPrompt = guestResponsePrompt({
       guestName: guest.name,
       personality: guest.personality,
-      topic: refreshedRoom.topic,
+      topic: room.topic,
       memory: guest.memory,
       hostMessage,
     });
@@ -377,29 +280,33 @@ async function runFollowUpRound(roomId: string, hostMessage: string) {
 
   let guestResponses: Array<{ guestId: string; guestName: string; response: string }> = [];
   try {
-    guestResponses = await Promise.allSettled(guestPromises).then((results) =>
-      results
-        .filter(
-          (r): r is PromiseFulfilledResult<{ guestId: string; guestName: string; response: string }> =>
-            r.status === "fulfilled"
-        )
-        .map((r) => r.value)
-    );
+    guestResponses = (await Promise.allSettled(guestPromises))
+      .filter(
+        (r): r is PromiseFulfilledResult<{ guestId: string; guestName: string; response: string }> =>
+          r.status === "fulfilled"
+      )
+      .map((r) => r.value);
   } catch {
-    // continue with what we have
+    // continue
   }
 
-  if (guestResponses.length === 0) {
-    store.setPhase(roomId, "AWAITING_USER");
-    return;
+  if (guestResponses.length === 0) return null;
+
+  // Background: update guest memories (fire-and-forget)
+  for (const gr of guestResponses) {
+    updateGuestMemoryBackground(roomId, gr.guestId, gr.guestName, {
+      hostMessage,
+      ownResponse: gr.response,
+    });
   }
 
-  // Host summarizes the follow-up responses
-  store.setPhase(roomId, "HOST_SUMMARIZING");
-
-  const guestSummariesText = guestResponses
+  // Build a text summary of all guest responses for the host
+  const guestSummaryText = guestResponses
     .map((g) => `${g.guestName}: ${g.response}`)
     .join("\n\n---\n\n");
+
+  // Stream a visible host summary of guest responses
+  store.setPhase(roomId, "HOST_SUMMARIZING");
 
   const summaryMsgId = getStore().addMessage(roomId, {
     role: "host",
@@ -410,21 +317,23 @@ async function runFollowUpRound(roomId: string, hostMessage: string) {
     isError: false,
   });
 
-  const summarizerMessages: ChatMessage[] = [
-    { role: "system", content: hostSummarizerPrompt(guestSummariesText) },
-    { role: "user", content: "Please summarize the above responses." },
-  ];
+  const apiKey2 = getStore().apiKey;
+  const hostModel = getStore().selectedHostModel;
 
+  let summaryText = "";
   try {
-    await new Promise<string>((resolve, reject) => {
+    summaryText = await new Promise<string>((resolve, reject) => {
       getStore().updateMessage(roomId, summaryMsgId, {
         isLoading: false,
         isStreaming: true,
       });
       streamChatCompletion(
-        apiKey,
+        apiKey2,
         hostModel,
-        summarizerMessages,
+        [
+          { role: "system", content: hostSummarizerPrompt(guestSummaryText) },
+          { role: "user", content: "Please summarize the above responses." },
+        ],
         (chunk) => {
           getStore().appendToMessage(roomId, summaryMsgId, chunk);
         },
@@ -440,36 +349,27 @@ async function runFollowUpRound(roomId: string, hostMessage: string) {
           });
           reject(error);
         },
-        store.preferredProviders[hostModel]
+        getStore().preferredProviders[hostModel]
       );
     });
   } catch {
-    store.setPhase(roomId, "AWAITING_USER");
-    return;
+    return guestSummaryText; // return raw text if summary fails
   }
 
-  // Background: update guest memories
-  for (const gr of guestResponses) {
-    updateGuestMemoryBackground(roomId, gr.guestId, gr.guestName, {
-      userMessage: hostMessage,
-      hostSummary: guestSummariesText,
-      ownResponse: gr.response,
-    });
-  }
-
-  store.setPhase(roomId, "AWAITING_USER");
-
-  // Check for queued user messages
-  const nextMessage = getStore().dequeueUserMessage(roomId);
-  if (nextMessage) {
-    await runDebateRound(roomId, nextMessage);
-  }
+  return summaryText;
 }
 
-async function runResearchPhase(roomId: string, queries: string[]) {
+// ─── Research phase ──────────────────────────────────────────────────
+// Runs researchers in parallel, streams their output, summarizes, and
+// returns the summary text for the host.
+
+async function runResearchPhase(
+  roomId: string,
+  queries: string[]
+): Promise<string | null> {
   const store = getStore();
   const room = store.rooms.find((r) => r.id === roomId);
-  if (!room) return;
+  if (!room) return null;
 
   const apiKey = store.apiKey;
   const researchModel = store.selectedResearchModel || store.selectedHostModel;
@@ -504,9 +404,7 @@ async function runResearchPhase(roomId: string, queries: string[]) {
           getStore().appendToResearchFile(roomId, fileId, chunk);
         },
         (fullText) => {
-          getStore().updateResearchFile(roomId, fileId, {
-            isStreaming: false,
-          });
+          getStore().updateResearchFile(roomId, fileId, { isStreaming: false });
           resolve(fullText);
         },
         (error) => {
@@ -521,71 +419,68 @@ async function runResearchPhase(roomId: string, queries: string[]) {
     });
   });
 
-  const researchResults = await Promise.allSettled(researchPromises);
-  const successfulResults = researchResults
-    .filter(
-      (r): r is PromiseFulfilledResult<string> => r.status === "fulfilled"
-    )
+  const results = await Promise.allSettled(researchPromises);
+  const successfulResults = results
+    .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
     .map((r) => r.value);
 
-  if (successfulResults.length > 0) {
-    // Summarize research
-    const researchSummaryText = successfulResults.join("\n\n---\n\n");
-    const summaryMsgId = getStore().addMessage(roomId, {
-      role: "host",
-      content: "",
-      isLoading: false,
-      isStreaming: true,
-      isSummary: true,
-      isError: false,
-    });
+  if (successfulResults.length === 0) return null;
 
-    try {
-      await new Promise<void>((resolve, reject) => {
-        streamChatCompletion(
-          apiKey,
-          store.selectedHostModel,
-          [
-            {
-              role: "system",
-              content: hostSummarizerPrompt(researchSummaryText),
-            },
-            {
-              role: "user",
-              content: "Summarize the research findings above.",
-            },
-          ],
-          (chunk) => {
-            getStore().appendToMessage(roomId, summaryMsgId, chunk);
-          },
-          () => {
-            getStore().updateMessage(roomId, summaryMsgId, {
-              isStreaming: false,
-            });
-            resolve();
-          },
-          (error) => {
-            getStore().updateMessage(roomId, summaryMsgId, {
-              isStreaming: false,
-              isError: true,
-              content: `Error: ${error.message}`,
-            });
-            reject(error);
-          },
-          store.preferredProviders[store.selectedHostModel]
-        );
-      });
-    } catch {
-      // Research summary failed, continue
-    }
+  // Summarize research
+  const rawResearch = successfulResults.join("\n\n---\n\n");
+  const summaryMsgId = getStore().addMessage(roomId, {
+    role: "host",
+    content: "",
+    isLoading: false,
+    isStreaming: true,
+    isSummary: true,
+    isError: false,
+  });
+
+  const hostModel = getStore().selectedHostModel;
+
+  let summaryText = "";
+  try {
+    summaryText = await new Promise<string>((resolve, reject) => {
+      streamChatCompletion(
+        getStore().apiKey,
+        hostModel,
+        [
+          { role: "system", content: hostSummarizerPrompt(rawResearch) },
+          { role: "user", content: "Summarize the research findings above." },
+        ],
+        (chunk) => {
+          getStore().appendToMessage(roomId, summaryMsgId, chunk);
+        },
+        (fullText) => {
+          getStore().updateMessage(roomId, summaryMsgId, { isStreaming: false });
+          resolve(fullText);
+        },
+        (error) => {
+          getStore().updateMessage(roomId, summaryMsgId, {
+            isStreaming: false,
+            isError: true,
+            content: `Error: ${error.message}`,
+          });
+          reject(error);
+        },
+        getStore().preferredProviders[hostModel]
+      );
+    });
+  } catch {
+    return rawResearch;
   }
+
+  return summaryText;
 }
+
+// ─── Background memory updates ───────────────────────────────────────
 
 function updateGuestMemoryBackground(
   roomId: string,
   guestId: string,
   guestName: string,
-  event: { userMessage: string; hostSummary: string; ownResponse: string }
+  event: { hostMessage: string; ownResponse: string }
 ) {
   const store = getStore();
   const room = store.rooms.find((r) => r.id === roomId);
@@ -595,7 +490,7 @@ function updateGuestMemoryBackground(
   const prompt = guestMemoryUpdatePrompt({
     guestName,
     currentMemory: guest.memory,
-    newEvent: `User said: "${event.userMessage}". Host summary: ${event.hostSummary}. My response: ${event.ownResponse}`,
+    newEvent: `Host said: "${event.hostMessage}". My response: ${event.ownResponse}`,
   });
 
   chatCompletion(
@@ -613,19 +508,16 @@ function updateGuestMemoryBackground(
         const memory: StructuredMemory = JSON.parse(response);
         getStore().updateGuestMemory(roomId, guestId, memory);
       } catch {
-        // Failed to parse memory update, skip
+        // skip
       }
     })
-    .catch(() => {
-      // Background task failed, non-critical
-    });
+    .catch(() => {});
 }
 
 function updateHostMemoryBackground(
   roomId: string,
   event: {
-    userMessage: string;
-    guestSummary: string;
+    context: HostContext;
     directorDecision: DirectorDecision;
   }
 ) {
@@ -633,10 +525,16 @@ function updateHostMemoryBackground(
   const room = store.rooms.find((r) => r.id === roomId);
   if (!room) return;
 
+  const parts: string[] = [];
+  if (event.context.userMessage) parts.push(`User said: "${event.context.userMessage}".`);
+  if (event.context.guestSummary) parts.push(`Guest summary: ${event.context.guestSummary}.`);
+  if (event.context.researchSummary) parts.push(`Research: ${event.context.researchSummary}.`);
+  parts.push(`Decision: ${event.directorDecision.action} — ${event.directorDecision.message}`);
+
   const prompt = guestMemoryUpdatePrompt({
     guestName: "Host",
     currentMemory: room.hostMemory,
-    newEvent: `User said: "${event.userMessage}". Guests discussed and the summary was: ${event.guestSummary}. Decision was: ${event.directorDecision.action} - ${event.directorDecision.message}`,
+    newEvent: parts.join(" "),
   });
 
   chatCompletion(
@@ -654,13 +552,13 @@ function updateHostMemoryBackground(
         const memory: StructuredMemory = JSON.parse(response);
         getStore().updateHostMemory(roomId, memory);
       } catch {
-        // Failed to parse, skip
+        // skip
       }
     })
-    .catch(() => {
-      // Background task failed, non-critical
-    });
+    .catch(() => {});
 }
+
+// ─── Export ──────────────────────────────────────────────────────────
 
 export function exportTranscript(
   roomId: string,

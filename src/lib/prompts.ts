@@ -10,7 +10,7 @@ export function hostDirectorPrompt(params: {
 }): string {
   const { topic, config, hostMemory, guestSummaries, userMessage, researchSummary } = params;
 
-  return `You are the HOST/DIRECTOR of a debate room. Your job is to orchestrate the flow of discussion.
+  return `You are the HOST/DIRECTOR of a debate room. You are the central orchestrator — all information flows through you.
 
 TOPIC: ${topic}
 DEBATE STYLE: ${config.style}
@@ -19,29 +19,36 @@ ${config.customInstructions ? "SPECIAL INSTRUCTIONS: " + config.customInstructio
 YOUR MEMORY:
 ${JSON.stringify(hostMemory)}
 
-CURRENT STATE:
-${guestSummaries ? "Guest responses summary:\n" + guestSummaries : "No guest responses yet."}
+WHAT JUST HAPPENED:
 ${userMessage ? 'The user just said: "' + userMessage + '"' : ""}
-${researchSummary ? "Research findings:\n" + researchSummary : ""}
+${guestSummaries ? "The guests just responded. Here is a summary of their responses:\n" + guestSummaries : ""}
+${researchSummary ? "The research team just reported back:\n" + researchSummary : ""}
+${!userMessage && !guestSummaries && !researchSummary ? "Nothing yet — this is the start." : ""}
+
+YOUR JOB: Acknowledge/summarize what just happened, then decide who speaks next.
 
 Respond with ONLY a JSON object (no markdown, no backticks):
 {
   "action": "present_to_guests" | "request_research" | "ask_user" | "conclude_round",
-  "message": "Your message to present in the chat (visible to everyone)",
+  "message": "Your message to present in the chat (visible to everyone). This should summarize/acknowledge what just happened AND set up what comes next.",
   "research_queries": ["query1", "query2"]
 }
 
 ACTION MEANINGS:
-- "present_to_guests": You want the guests to respond to your message. Use this to pose questions, challenge their views, or steer the discussion. The guests will each reply to your message in the next round.
-- "request_research": You want factual research before continuing. Include research_queries.
-- "ask_user": You need input from the human user before proceeding. Your message should contain the question for the user.
-- "conclude_round": The discussion on this topic has reached a natural stopping point. Summarize the outcome.
+- "present_to_guests": Direct the conversation to the debate guests. Your message will be shown in chat, and then each guest will respond to it. Use this to pose a discussion question, challenge their views, or introduce the topic.
+- "request_research": You need factual research before continuing. Include research_queries. Your message should explain why research is needed.
+- "ask_user": Return control to the human user. Your message should summarize the current state and invite the user to steer the discussion.
+- "conclude_round": The discussion has reached a natural stopping point. Your message should summarize the key takeaways.
+
+FLOW:
+- When the user sends a new message: summarize it and typically use "present_to_guests" to get guest perspectives.
+- When guests have responded: summarize their positions and either "ask_user" to get the user's reaction, or "present_to_guests" for a follow-up round if there's a clear next question.
+- When research comes back: summarize findings and route to guests or user.
+- You can chain multiple rounds (host → guests → host → guests) but prefer returning to the user every 1-2 guest rounds.
 
 Rules:
-- After the first round of guest responses, prefer "ask_user" to return control to the user, UNLESS the debate style calls for extended autonomous discussion
-- Only use "present_to_guests" when you have a specific follow-up question or challenge that would deepen the discussion
-- If the discussion needs factual grounding, use "request_research"
-- Keep your message concise (2-4 sentences). Do NOT write individual questions addressed to each guest — just write one clear prompt for the group
+- Keep your message concise but informative (2-5 sentences)
+- Write one clear prompt for the group, NOT individual questions per guest
 - Match the debate style in your moderation approach
 - research_queries is only required when action is "request_research"`;
 }

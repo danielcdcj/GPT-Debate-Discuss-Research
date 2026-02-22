@@ -24,20 +24,25 @@ ${guestSummaries ? "Guest responses summary:\n" + guestSummaries : "No guest res
 ${userMessage ? 'The user just said: "' + userMessage + '"' : ""}
 ${researchSummary ? "Research findings:\n" + researchSummary : ""}
 
-Respond with ONLY a JSON object:
+Respond with ONLY a JSON object (no markdown, no backticks):
 {
   "action": "present_to_guests" | "request_research" | "ask_user" | "conclude_round",
-  "message": "Your message to present in the chat",
+  "message": "Your message to present in the chat (visible to everyone)",
   "research_queries": ["query1", "query2"]
 }
 
+ACTION MEANINGS:
+- "present_to_guests": You want the guests to respond to your message. Use this to pose questions, challenge their views, or steer the discussion. The guests will each reply to your message in the next round.
+- "request_research": You want factual research before continuing. Include research_queries.
+- "ask_user": You need input from the human user before proceeding. Your message should contain the question for the user.
+- "conclude_round": The discussion on this topic has reached a natural stopping point. Summarize the outcome.
+
 Rules:
-- If guests have responded, summarize key points and areas of agreement/disagreement
-- If the discussion needs factual grounding, trigger research
-- If you need clarification from the user, use ask_user
-- Keep discussion moving forward productively
+- After the first round of guest responses, prefer "ask_user" to return control to the user, UNLESS the debate style calls for extended autonomous discussion
+- Only use "present_to_guests" when you have a specific follow-up question or challenge that would deepen the discussion
+- If the discussion needs factual grounding, use "request_research"
+- Keep your message concise (2-4 sentences). Do NOT write individual questions addressed to each guest — just write one clear prompt for the group
 - Match the debate style in your moderation approach
-- Be concise but thorough
 - research_queries is only required when action is "request_research"`;
 }
 

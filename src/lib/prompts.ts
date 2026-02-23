@@ -140,8 +140,9 @@ export function guestResponsePrompt(params: {
   topic: string;
   memory: StructuredMemory;
   hostMessage: string;
+  researchContext?: string;
 }): string {
-  const { guestName, personality, topic, memory, hostMessage } = params;
+  const { guestName, personality, topic, memory, hostMessage, researchContext } = params;
 
   return `You are ${guestName}, a participant in a structured debate/discussion.
 
@@ -153,10 +154,10 @@ TOPIC: ${topic}
 YOUR MEMORY OF THIS DISCUSSION:
 ${JSON.stringify(memory)}
 
-THE HOST JUST SAID:
+${researchContext ? `RESEARCH DATA AVAILABLE:\nThe following research has been gathered on this topic. You may reference, critique, or build upon these findings in your response.\n\n${researchContext}\n` : ""}THE HOST JUST SAID:
 ${hostMessage}
 
-Respond in character. Be specific, substantive, and true to your personality. Reference your memory of previous rounds when relevant. Keep your response under 300 words unless the topic demands more detail.`;
+Respond in character. Be specific, substantive, and true to your personality. Reference your memory of previous rounds when relevant.${researchContext ? " You have access to research data — cite specific findings when they support or challenge your points." : ""} Keep your response under 300 words unless the topic demands more detail.`;
 }
 
 export function guestMemoryUpdatePrompt(params: {

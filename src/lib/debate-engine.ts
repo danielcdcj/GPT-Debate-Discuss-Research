@@ -283,6 +283,13 @@ async function runGuestRound(
 
   store.setPhase(roomId, "GUESTS_RESPONDING");
 
+  // Build research context from completed research files so guests can reference findings
+  const researchContext =
+    room.researchFiles
+      .filter((f) => f.content && !f.isStreaming)
+      .map((f) => `### ${f.researcher.emoji} ${f.researcher.name}: ${f.title}\n${f.content}`)
+      .join("\n\n---\n\n") || undefined;
+
   const guestPromises = room.guests.map(async (guest) => {
     const msgId = getStore().addMessage(roomId, {
       role: "guest",
@@ -302,6 +309,7 @@ async function runGuestRound(
       topic: room.topic,
       memory: guest.memory,
       hostMessage,
+      researchContext,
     });
 
     const messages: ChatMessage[] = [

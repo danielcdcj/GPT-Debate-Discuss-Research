@@ -1,227 +1,262 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfmModule from "remark-gfm";
-import { Message } from "@/store/types";
+import type { Message } from "@/core/types";
 
-// remark-gfm v4 is ESM-only; CJS interop wraps it in { default: fn }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Handle remark-gfm ESM interop
 const remarkGfm = (remarkGfmModule as any).default || remarkGfmModule;
-import { useDebateStore } from "@/store/debate-store";
-import { Modal } from "@/components/ui/Modal";
 
 interface MessageBubbleProps {
   message: Message;
 }
 
-const COLLAPSE_THRESHOLD = 280;
+// -- Role-based style configuration --
 
-export function MessageBubble({ message }: MessageBubbleProps) {
-  const expandedMessageId = useDebateStore((s) => s.expandedMessageId);
-  const setExpandedMessageId = useDebateStore((s) => s.setExpandedMessageId);
-  const [showGuestModal, setShowGuestModal] = useState(false);
+const roleStyles = {
+  host: {
+    alignment: "justify-start",
+    border: "border-l-[3px] border-indigo-500",
+    bg: "bg-[rgba(99,102,241,0.05)]",
+    summaryBg: "bg-[rgba(99,102,241,0.08)]",
+    nameColor: "text-indigo-400",
+    textColor: "text-slate-200",
+  },
+  guest: {
+    alignment: "justify-start",
+    border: "border-l-[3px] border-emerald-500",
+    bg: "bg-[rgba(16,185,129,0.05)]",
+    summaryBg: "bg-[rgba(16,185,129,0.08)]",
+    nameColor: "text-emerald-400",
+    textColor: "text-slate-200",
+  },
+  user: {
+    alignment: "justify-end",
+    border: "border-r-[3px] border-violet-500",
+    bg: "bg-[rgba(139,92,246,0.08)]",
+    summaryBg: "bg-[rgba(139,92,246,0.12)]",
+    nameColor: "text-violet-400",
+    textColor: "text-slate-200",
+  },
+  system: {
+    alignment: "justify-center",
+    border: "",
+    bg: "",
+    summaryBg: "",
+    nameColor: "text-amber-400",
+    textColor: "text-amber-400/80",
+  },
+} as const;
 
-  const isExpanded = expandedMessageId === message.id;
-  const isLong = message.content.length > COLLAPSE_THRESHOLD;
-  const shouldCollapse = isLong && !isExpanded && !message.isStreaming;
-  const isGuest = message.role === "guest";
-  const isHost = message.role === "host";
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
-  const roleConfig = getRoleConfig(message);
+// -- Streaming cursor component --
 
-  // Guest messages: show collapsed status with "Show" button
-  if (isGuest) {
-    const isDone = !message.isLoading && !message.isStreaming;
-    const isThinking = message.isLoading || message.isStreaming;
-
-    return (
-      <>
-        <div className={`flex gap-2 sm:gap-3 px-2 sm:px-4 py-2 sm:py-3 ${roleConfig.bg} rounded-lg`}>
-          <div className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-base sm:text-lg bg-slate-800">
-            {roleConfig.emoji}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className={`text-sm font-medium ${roleConfig.nameColor}`}>
-                {roleConfig.name}
-              </span>
-              <span className="text-xs text-slate-500">
-                {new Date(message.timestamp).toLocaleTimeString()}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3 mt-1.5">
-              {isThinking ? (
-                <span className="flex items-center gap-2 text-xs text-slate-400">
-                  <span className="flex gap-1">
-                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:0ms]" />
-                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:300ms]" />
-                  </span>
-                  Thinking...
-                </span>
-              ) : isDone && message.content ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Done
-                  </span>
-                  <button
-                    onClick={() => setShowGuestModal(true)}
-                    className="text-xs px-2.5 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors border border-slate-600"
-                  >
-                    Show
-                  </button>
-                </div>
-              ) : isDone && message.isError ? (
-                <span className="text-xs text-red-400">Error</span>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        {/* Guest response modal */}
-        <Modal
-          isOpen={showGuestModal}
-          onClose={() => setShowGuestModal(false)}
-          title={`${roleConfig.emoji} ${roleConfig.name}`}
-          maxWidth="max-w-2xl"
-        >
-          <div className="markdown-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-          </div>
-        </Modal>
-      </>
-    );
-  }
-
-  // Host messages: render with markdown
-  if (isHost) {
-    return (
-      <div className={`flex gap-2 sm:gap-3 px-2 sm:px-4 py-2 sm:py-3 ${roleConfig.bg} rounded-lg`}>
-        <div className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-base sm:text-lg bg-slate-800">
-          {roleConfig.emoji}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className={`text-sm font-medium ${roleConfig.nameColor}`}>
-              {roleConfig.name}
-            </span>
-            {message.isSummary && (
-              <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-300 border border-indigo-700/30">
-                Summary
-              </span>
-            )}
-            {message.isError && (
-              <span className="text-xs px-1.5 py-0.5 rounded bg-red-900/50 text-red-300 border border-red-700/30">
-                Error
-              </span>
-            )}
-            <span className="text-xs text-slate-500">
-              {new Date(message.timestamp).toLocaleTimeString()}
-            </span>
-          </div>
-
-          <div className="prose prose-invert prose-sm max-w-none prose-headings:text-white prose-p:text-slate-300 prose-li:text-slate-300 prose-strong:text-white prose-a:text-indigo-400">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
-            {message.isStreaming && (
-              <span className="inline-block w-2 h-4 bg-slate-400 animate-pulse ml-0.5 align-middle" />
-            )}
-            {message.isLoading && !message.isStreaming && (
-              <span className="flex gap-1 mt-1">
-                <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce [animation-delay:0ms]" />
-                <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce [animation-delay:150ms]" />
-                <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce [animation-delay:300ms]" />
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // User and system messages: plain text (original behavior)
+function StreamingCursor() {
   return (
-    <div className={`flex gap-2 sm:gap-3 px-2 sm:px-4 py-2 sm:py-3 ${roleConfig.bg} rounded-lg`}>
-      <div className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-base sm:text-lg bg-slate-800">
-        {roleConfig.emoji}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <span className={`text-sm font-medium ${roleConfig.nameColor}`}>
-            {roleConfig.name}
-          </span>
-          {message.isError && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-red-900/50 text-red-300 border border-red-700/30">
-              Error
-            </span>
-          )}
-          <span className="text-xs text-slate-500">
-            {new Date(message.timestamp).toLocaleTimeString()}
-          </span>
-        </div>
+    <span className="inline-block ml-1 w-2 h-4 bg-indigo-400 rounded-sm animate-pulse" />
+  );
+}
 
-        <div className="relative">
-          <div
-            className={`text-sm text-slate-300 whitespace-pre-wrap break-words ${
-              shouldCollapse ? "max-h-[4.5em] overflow-hidden" : ""
-            }`}
-          >
-            {message.content}
-          </div>
+// -- System message (special layout, no bubble) --
 
-          {shouldCollapse && (
-            <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-slate-800/90 to-transparent" />
-          )}
-        </div>
-
-        {isLong && !message.isStreaming && (
-          <button
-            onClick={() =>
-              setExpandedMessageId(isExpanded ? null : message.id)
-            }
-            className="text-xs text-indigo-400 hover:text-indigo-300 mt-1 transition-colors"
-          >
-            {isExpanded ? "Show less" : "Show more"}
-          </button>
-        )}
+function SystemMessage({ message }: { message: Message }) {
+  return (
+    <div className="flex justify-center py-2">
+      <div className="flex items-center gap-2 text-xs text-amber-400/80 max-w-lg text-center">
+        <svg
+          className="w-3.5 h-3.5 shrink-0 text-amber-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"
+          />
+        </svg>
+        <span className={message.isError ? "text-red-400" : ""}>
+          {message.content}
+        </span>
       </div>
     </div>
   );
 }
 
-function getRoleConfig(message: Message) {
-  switch (message.role) {
-    case "host":
-      return {
-        emoji: "\uD83C\uDF99\uFE0F",
-        name: "Host",
-        nameColor: "text-indigo-400",
-        bg: "bg-indigo-950/20",
-      };
-    case "guest":
-      return {
-        emoji: message.guestAvatar || "\uD83D\uDC64",
-        name: message.guestName || "Guest",
-        nameColor: "text-emerald-400",
-        bg: "bg-emerald-950/20",
-      };
-    case "user":
-      return {
-        emoji: "\uD83D\uDC64",
-        name: "You",
-        nameColor: "text-pink-400",
-        bg: "bg-pink-950/20",
-      };
-    case "system":
-      return {
-        emoji: "\uD83D\uDCE2",
-        name: "System",
-        nameColor: "text-amber-400",
-        bg: "bg-amber-950/20",
-      };
+// -- Role label with icon --
+
+function RoleLabel({ message }: { message: Message }) {
+  const style = roleStyles[message.role];
+
+  if (message.role === "host") {
+    return (
+      <div className={`flex items-center gap-1.5 text-xs font-medium ${style.nameColor}`}>
+        <svg
+          className="w-3.5 h-3.5"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+          />
+        </svg>
+        <span>Host</span>
+        {message.isSummary && (
+          <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300">
+            Summary
+          </span>
+        )}
+      </div>
+    );
   }
+
+  if (message.role === "guest") {
+    return (
+      <div className={`flex items-center gap-1.5 text-xs font-medium ${style.nameColor}`}>
+        <span className="text-sm">{message.guestAvatar || "?"}</span>
+        <span>{message.guestName || "Guest"}</span>
+      </div>
+    );
+  }
+
+  if (message.role === "user") {
+    return (
+      <div className={`flex items-center gap-1.5 text-xs font-medium ${style.nameColor}`}>
+        <svg
+          className="w-3.5 h-3.5"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+          />
+        </svg>
+        <span>You</span>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// -- Markdown content renderer --
+
+function MarkdownContent({
+  content,
+  isSummary,
+}: {
+  content: string;
+  isSummary: boolean;
+}) {
+  return (
+    <div
+      className={`markdown-content prose prose-invert prose-sm max-w-none
+        prose-p:my-1.5 prose-p:leading-relaxed
+        prose-headings:text-slate-200 prose-headings:font-semibold
+        prose-h1:text-base prose-h2:text-sm prose-h3:text-sm
+        prose-strong:text-slate-100
+        prose-ul:my-1.5 prose-ol:my-1.5
+        prose-li:my-0.5
+        prose-code:text-indigo-300 prose-code:bg-white/5 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
+        prose-pre:bg-[rgba(0,0,0,0.3)] prose-pre:border prose-pre:border-white/5 prose-pre:rounded-lg
+        prose-blockquote:border-indigo-500/40 prose-blockquote:text-slate-400
+        prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:underline
+        prose-table:text-xs
+        prose-th:text-slate-300 prose-th:border-white/10
+        prose-td:border-white/5
+        ${isSummary ? "text-[13px]" : "text-[13px]"}
+      `}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+// -- Main component --
+
+export default function MessageBubble({ message }: MessageBubbleProps) {
+  // System messages use a distinct layout
+  if (message.role === "system") {
+    return <SystemMessage message={message} />;
+  }
+
+  const style = roleStyles[message.role];
+  const isUser = message.role === "user";
+  const isSummary = message.isSummary;
+  const isError = message.isError;
+
+  const bubbleBg = useMemo(() => {
+    if (isError) return "bg-red-500/5";
+    if (isSummary) return style.summaryBg;
+    return style.bg;
+  }, [isError, isSummary, style]);
+
+  const borderStyle = useMemo(() => {
+    if (isError) {
+      return isUser
+        ? "border-r-[3px] border-red-500"
+        : "border-l-[3px] border-red-500";
+    }
+    return style.border;
+  }, [isError, isUser, style]);
+
+  return (
+    <div className={`flex ${style.alignment} px-4 py-1`}>
+      <div
+        className={`
+          relative max-w-[85%] md:max-w-[75%] lg:max-w-[70%]
+          rounded-xl
+          ${borderStyle}
+          ${bubbleBg}
+          ${isSummary ? "px-5 py-4" : "px-4 py-3"}
+          transition-colors duration-150
+        `}
+        style={{
+          border: isError
+            ? undefined
+            : undefined,
+          boxShadow: isSummary
+            ? "0 0 20px rgba(99, 102, 241, 0.04)"
+            : undefined,
+        }}
+      >
+        {/* Role label */}
+        <div className={`mb-1.5 ${isUser ? "text-right" : "text-left"}`}>
+          <RoleLabel message={message} />
+        </div>
+
+        {/* Message content */}
+        <div className={`${isError ? "text-red-300" : style.textColor}`}>
+          <MarkdownContent
+            content={message.content}
+            isSummary={isSummary}
+          />
+          {message.isStreaming && <StreamingCursor />}
+        </div>
+
+        {/* Timestamp */}
+        <div
+          className={`mt-2 text-[10px] text-slate-500 ${isUser ? "text-left" : "text-right"}`}
+        >
+          {formatTimestamp(message.timestamp)}
+        </div>
+      </div>
+    </div>
+  );
 }

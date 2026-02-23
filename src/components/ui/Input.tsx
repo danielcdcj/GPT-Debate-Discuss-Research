@@ -4,55 +4,46 @@ import React from "react";
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
-  error?: string;
 }
 
-export function Input({
-  label,
-  error,
-  className = "",
-  ...props
-}: InputProps) {
+export function Input({ label, className = "", ...props }: InputProps) {
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <label className="text-sm font-medium text-slate-300">{label}</label>
+        <label className="text-xs font-medium text-slate-400">{label}</label>
       )}
       <input
-        className={`w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-400 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
-          error ? "border-red-500" : ""
-        } ${className}`}
+        className={`
+          w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white
+          placeholder-slate-500 transition-colors
+          focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/50
+          ${className}
+        `}
         {...props}
       />
-      {error && <p className="text-xs text-red-400">{error}</p>}
     </div>
   );
 }
 
-interface TextareaProps
-  extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
-  error?: string;
 }
 
-export function Textarea({
-  label,
-  error,
-  className = "",
-  ...props
-}: TextareaProps) {
+export function Textarea({ label, className = "", ...props }: TextareaProps) {
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <label className="text-sm font-medium text-slate-300">{label}</label>
+        <label className="text-xs font-medium text-slate-400">{label}</label>
       )}
       <textarea
-        className={`w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-400 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none ${
-          error ? "border-red-500" : ""
-        } ${className}`}
+        className={`
+          w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white
+          placeholder-slate-500 transition-colors resize-none
+          focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/50
+          ${className}
+        `}
         {...props}
       />
-      {error && <p className="text-xs text-red-400">{error}</p>}
     </div>
   );
 }
@@ -62,23 +53,23 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   options: Array<{ value: string; label: string }>;
 }
 
-export function Select({
-  label,
-  options,
-  className = "",
-  ...props
-}: SelectProps) {
+export function Select({ label, options, className = "", ...props }: SelectProps) {
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <label className="text-sm font-medium text-slate-300">{label}</label>
+        <label className="text-xs font-medium text-slate-400">{label}</label>
       )}
       <select
-        className={`w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white transition-colors focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 ${className}`}
+        className={`
+          w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white
+          transition-colors cursor-pointer
+          focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/50
+          ${className}
+        `}
         {...props}
       >
         {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
+          <option key={opt.value} value={opt.value} className="bg-slate-900">
             {opt.label}
           </option>
         ))}

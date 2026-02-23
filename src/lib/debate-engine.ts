@@ -13,7 +13,6 @@ import {
   guestMemoryUpdatePrompt,
   guestResponsePrompt,
   hostDirectorPrompt,
-  hostSummarizerPrompt,
   researcherPrompt,
 } from "./prompts";
 
@@ -80,6 +79,13 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
 
   let currentContext = { ...context };
 
+  // Accumulate everything that happens since the user's last message.
+  // This gives the Director full context when it routes back to the user.
+  const contextLog: string[] = [];
+  if (context.userMessage) {
+    contextLog.push(`[User]: "${context.userMessage}"`);
+  }
+
   while (iterations < maxIterations) {
     iterations++;
 
@@ -96,6 +102,7 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
       guestSummaries: currentContext.guestSummary,
       userMessage: currentContext.userMessage,
       researchSummary: currentContext.researchSummary,
+      accumulatedContext: contextLog.length > 1 ? contextLog.join("\n\n") : undefined,
     });
 
     let decision: DirectorDecision;
@@ -127,9 +134,12 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
       content: decision.message,
       isLoading: false,
       isStreaming: false,
-      isSummary: false,
+      isSummary: decision.action === "ask_user" || decision.action === "conclude_round",
       isError: false,
     });
+
+    // Log the host's decision for accumulated context
+    contextLog.push(`[Host → ${decision.action}]: ${decision.message}`);
 
     // Update host memory (fire-and-forget)
     updateHostMemoryBackground(roomId, {
@@ -156,11 +166,17 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
       const researchModelAvailable = store.selectedResearchModel || store.selectedHostModel;
       if (decision.research_queries?.length && researchModelAvailable) {
         store.setPhase(roomId, "RESEARCH_PHASE");
-        const researchSummary = await runResearchPhase(roomId, decision.research_queries);
+        const researchResult = await runResearchPhase(roomId, decision.research_queries);
+
+        // Log research results to accumulated context
+        if (researchResult) {
+          contextLog.push(`[Research Results]:\n${researchResult}`);
+        }
+
         currentContext = {
           userMessage: undefined,
           guestSummary: undefined,
-          researchSummary: researchSummary || "Research did not return results.",
+          researchSummary: researchResult || "Research did not return results.",
         };
         continue; // loop back to host
       }
@@ -188,16 +204,20 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
         return;
       }
 
-      // Run guest round, then loop back to host with their responses
-      const guestSummary = await runGuestRound(roomId, decision.message);
-      if (!guestSummary) {
+      // Run guest round — returns raw guest responses (no intermediate summary)
+      const guestResult = await runGuestRound(roomId, decision.message);
+      if (!guestResult) {
         // Guests all failed — return to user
         store.setPhase(roomId, "AWAITING_USER");
         return;
       }
+
+      // Log guest responses to accumulated context
+      contextLog.push(`[Guest Responses]:\n${guestResult}`);
+
       currentContext = {
         userMessage: undefined,
-        guestSummary,
+        guestSummary: guestResult,
         researchSummary: undefined,
       };
       getStore().incrementRound(roomId);
@@ -223,7 +243,9 @@ async function hostDecisionLoop(roomId: string, context: HostContext) {
 
 // ─── Guest round ─────────────────────────────────────────────────────
 // Fires all guests in parallel, streams their responses, then returns
-// a concatenated summary string for the host.
+// a concatenated text of all guest responses for the host.
+// No intermediate host summary — the Director will produce the
+// comprehensive report when it routes back to the user.
 
 async function runGuestRound(
   roomId: string,
@@ -319,68 +341,19 @@ async function runGuestRound(
     });
   }
 
-  // Build a text summary of all guest responses for the host
+  // Return raw guest responses for the host to summarize in its comprehensive report
   const guestSummaryText = guestResponses
     .map((g) => `${g.guestName}: ${g.response}`)
     .join("\n\n---\n\n");
 
-  // Stream a visible host summary of guest responses
-  store.setPhase(roomId, "HOST_SUMMARIZING");
-
-  const summaryMsgId = getStore().addMessage(roomId, {
-    role: "host",
-    content: "",
-    isLoading: true,
-    isStreaming: false,
-    isSummary: true,
-    isError: false,
-  });
-
-  const apiKey2 = getStore().apiKey;
-  const hostModel = getStore().selectedHostModel;
-
-  let summaryText = "";
-  try {
-    summaryText = await new Promise<string>((resolve, reject) => {
-      getStore().updateMessage(roomId, summaryMsgId, {
-        isLoading: false,
-        isStreaming: true,
-      });
-      streamChatCompletion(
-        apiKey2,
-        hostModel,
-        [
-          { role: "system", content: hostSummarizerPrompt(guestSummaryText) },
-          { role: "user", content: "Please summarize the above responses." },
-        ],
-        (chunk) => {
-          getStore().appendToMessage(roomId, summaryMsgId, chunk);
-        },
-        (fullText) => {
-          getStore().updateMessage(roomId, summaryMsgId, { isStreaming: false });
-          resolve(fullText);
-        },
-        (error) => {
-          getStore().updateMessage(roomId, summaryMsgId, {
-            isStreaming: false,
-            isError: true,
-            content: `Error: ${error.message}`,
-          });
-          reject(error);
-        },
-        getStore().preferredProviders[hostModel]
-      );
-    });
-  } catch {
-    return guestSummaryText; // return raw text if summary fails
-  }
-
-  return summaryText;
+  return guestSummaryText;
 }
 
 // ─── Research phase ──────────────────────────────────────────────────
-// Runs researchers in parallel, streams their output, summarizes, and
-// returns the summary text for the host.
+// Runs researchers in parallel, streams their output to research files,
+// and returns the raw research text for the host.
+// No intermediate host summary — the Director will produce the
+// comprehensive report when it routes back to the user.
 
 async function runResearchPhase(
   roomId: string,
@@ -445,52 +418,8 @@ async function runResearchPhase(
 
   if (successfulResults.length === 0) return null;
 
-  // Summarize research
-  const rawResearch = successfulResults.join("\n\n---\n\n");
-  const summaryMsgId = getStore().addMessage(roomId, {
-    role: "host",
-    content: "",
-    isLoading: false,
-    isStreaming: true,
-    isSummary: true,
-    isError: false,
-  });
-
-  const hostModel = getStore().selectedHostModel;
-
-  let summaryText = "";
-  try {
-    summaryText = await new Promise<string>((resolve, reject) => {
-      streamChatCompletion(
-        getStore().apiKey,
-        hostModel,
-        [
-          { role: "system", content: hostSummarizerPrompt(rawResearch) },
-          { role: "user", content: "Summarize the research findings above." },
-        ],
-        (chunk) => {
-          getStore().appendToMessage(roomId, summaryMsgId, chunk);
-        },
-        (fullText) => {
-          getStore().updateMessage(roomId, summaryMsgId, { isStreaming: false });
-          resolve(fullText);
-        },
-        (error) => {
-          getStore().updateMessage(roomId, summaryMsgId, {
-            isStreaming: false,
-            isError: true,
-            content: `Error: ${error.message}`,
-          });
-          reject(error);
-        },
-        getStore().preferredProviders[hostModel]
-      );
-    });
-  } catch {
-    return rawResearch;
-  }
-
-  return summaryText;
+  // Return raw research text for the host to include in its comprehensive report
+  return successfulResults.join("\n\n---\n\n");
 }
 
 // ─── Background memory updates ───────────────────────────────────────
@@ -608,16 +537,16 @@ export function exportTranscript(
     let label = "";
     switch (msg.role) {
       case "host":
-        label = `🎤 Host${msg.isSummary ? " (Summary)" : ""}`;
+        label = `Host${msg.isSummary ? " (Summary)" : ""}`;
         break;
       case "guest":
-        label = `${msg.guestAvatar || "👤"} ${msg.guestName || "Guest"}`;
+        label = `${msg.guestAvatar || ""} ${msg.guestName || "Guest"}`;
         break;
       case "user":
-        label = "👤 You";
+        label = "You";
         break;
       case "system":
-        label = "📢 System";
+        label = "System";
         break;
     }
 

@@ -2,8 +2,12 @@
 
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import remarkGfmModule from "remark-gfm";
 import { Message } from "@/store/types";
+
+// remark-gfm v4 is ESM-only; CJS interop wraps it in { default: fn }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const remarkGfm = (remarkGfmModule as any).default || remarkGfmModule;
 import { useDebateStore } from "@/store/debate-store";
 import { Modal } from "@/components/ui/Modal";
 

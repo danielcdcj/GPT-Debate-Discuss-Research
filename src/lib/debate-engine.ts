@@ -20,6 +20,28 @@ function getStore() {
   return useDebateStore.getState();
 }
 
+// ─── Init debate ─────────────────────────────────────────────────────
+// Called when a room is first created. The host kicks off the conversation
+// without any user message — it introduces the topic and decides what to do.
+
+export async function initDebate(roomId: string) {
+  const store = getStore();
+  const room = store.rooms.find((r) => r.id === roomId);
+  if (!room) return;
+
+  const hostModel = store.selectedHostModel;
+  if (!hostModel) return;
+
+  store.setPhase(roomId, "HOST_SUMMARIZING");
+  store.incrementRound(roomId);
+
+  await hostDecisionLoop(roomId, {
+    userMessage: undefined,
+    guestSummary: undefined,
+    researchSummary: undefined,
+  });
+}
+
 // ─── Main entry point ────────────────────────────────────────────────
 // Called when the user sends a message. The host always goes first.
 

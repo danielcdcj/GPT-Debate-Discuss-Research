@@ -7,6 +7,7 @@ import { Input, Textarea, Select } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { DebateStyle } from "@/store/types";
 import { chatCompletion } from "@/lib/openrouter";
+import { initDebate } from "@/lib/debate-engine";
 import { ModelSelector } from "@/components/right-panel/ModelSelector";
 
 interface NewRoomDialogProps {
@@ -53,6 +54,7 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
   const createRoom = useDebateStore((s) => s.createRoom);
   const addGuest = useDebateStore((s) => s.addGuest);
   const setSelectedHostModel = useDebateStore((s) => s.setSelectedHostModel);
+  const setSelectedGuestModel = useDebateStore((s) => s.setSelectedGuestModel);
   const preferredProviders = useDebateStore((s) => s.preferredProviders);
 
   const resetForm = () => {
@@ -149,10 +151,14 @@ Rules:
   };
 
   const handleCreate = () => {
-    if (!name.trim() || !topic.trim() || guests.length === 0) return;
+    if (!name.trim() || !topic.trim() || guests.length < 2) return;
 
-    // Set the host model globally
+    // Set models globally — use host model for guests too if no guest model set
     setSelectedHostModel(hostModel);
+    const currentGuestModel = useDebateStore.getState().selectedGuestModel;
+    if (!currentGuestModel) {
+      setSelectedGuestModel(hostModel);
+    }
 
     // Create the room
     const roomId = createRoom(name.trim(), topic.trim(), {
@@ -171,6 +177,9 @@ Rules:
     }
 
     handleClose();
+
+    // Kick off the conversation — host decides what to do first
+    initDebate(roomId);
   };
 
   const updateGuest = (index: number, updates: Partial<GeneratedGuest>) => {
@@ -312,6 +321,9 @@ Rules:
               <p className="text-xs text-slate-400">
                 {guests.length} guest{guests.length !== 1 ? "s" : ""} generated.
                 Edit personalities, add, or remove guests as needed.
+                {guests.length < 2 && (
+                  <span className="text-amber-400 ml-1">(Minimum 2 guests required)</span>
+                )}
               </p>
 
               <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
@@ -425,9 +437,9 @@ Rules:
               </Button>
               <Button
                 onClick={handleCreate}
-                disabled={guests.length === 0 || isGenerating}
+                disabled={guests.length < 2 || isGenerating}
               >
-                Create Room
+                Start Conversation
               </Button>
             </div>
           </div>

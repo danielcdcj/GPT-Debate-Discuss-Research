@@ -44,7 +44,7 @@ export function Modal({
         onClick={onClose}
       />
       <div
-        className={`relative ${maxWidth} w-full mx-2 sm:mx-4 max-h-[90vh] sm:max-h-none bg-slate-800 rounded-xl border border-slate-700 shadow-2xl flex flex-col`}
+        className={`relative ${maxWidth} w-full mx-2 sm:mx-4 max-h-[90vh] bg-slate-800 rounded-xl border border-slate-700 shadow-2xl flex flex-col`}
       >
         <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-700 shrink-0">
           <h2 className="text-base sm:text-lg font-semibold text-white truncate pr-2">{title}</h2>

@@ -1,8 +1,14 @@
 "use client";
 
 import React from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfmModule from "remark-gfm";
 import { Modal } from "@/components/ui/Modal";
 import { ResearchFile } from "@/store/types";
+
+// remark-gfm v4 is ESM-only; CJS interop wraps it in { default: fn }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const remarkGfm = (remarkGfmModule as any).default || remarkGfmModule;
 
 interface ResearchViewerProps {
   file: ResearchFile | null;
@@ -37,13 +43,15 @@ export function ResearchViewer({ file, onClose }: ResearchViewerProps) {
         )}
 
         <div className="border-t border-slate-700 pt-3">
-          <div className="prose prose-sm prose-invert max-w-none text-slate-300 leading-relaxed whitespace-pre-wrap">
-            {file.content || (
-              <span className="text-slate-500 italic">
-                No content yet...
-              </span>
-            )}
-          </div>
+          {file.content ? (
+            <div className="markdown-content prose prose-sm prose-invert max-w-none text-slate-300 leading-relaxed">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {file.content}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <p className="text-slate-500 italic">No content yet...</p>
+          )}
         </div>
       </div>
     </Modal>

@@ -5,6 +5,7 @@ import { useDebateStore } from "@/store/debate-store";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { ModelSelector } from "@/components/right-panel/ModelSelector";
 
 interface AddGuestDialogProps {
   isOpen: boolean;
@@ -50,9 +51,14 @@ export function AddGuestDialog({ isOpen, onClose }: AddGuestDialogProps) {
   const [name, setName] = useState("");
   const [avatar, setAvatar] = useState("🧑‍🔬");
   const [personality, setPersonality] = useState("");
+  const [model, setModel] = useState("");
 
   const activeRoomId = useDebateStore((s) => s.activeRoomId);
   const addGuest = useDebateStore((s) => s.addGuest);
+  const selectedGuestModel = useDebateStore((s) => s.selectedGuestModel);
+
+  // Initialize model with the global guest model when dialog opens
+  const effectiveModel = model || selectedGuestModel;
 
   const handleAdd = () => {
     if (!name.trim() || !personality.trim() || !activeRoomId) return;
@@ -60,10 +66,12 @@ export function AddGuestDialog({ isOpen, onClose }: AddGuestDialogProps) {
       name: name.trim(),
       avatar,
       personality: personality.trim(),
+      model: effectiveModel || undefined,
     });
     setName("");
     setAvatar("🧑‍🔬");
     setPersonality("");
+    setModel("");
     onClose();
   };
 
@@ -129,6 +137,12 @@ export function AddGuestDialog({ isOpen, onClose }: AddGuestDialogProps) {
           value={personality}
           onChange={(e) => setPersonality(e.target.value)}
           rows={4}
+        />
+
+        <ModelSelector
+          label="Model"
+          value={effectiveModel}
+          onChange={setModel}
         />
 
         <div className="flex gap-2 justify-end pt-2">

@@ -24,6 +24,7 @@ export interface Guest {
   name: string;
   avatar: string;
   personality: string;
+  model?: string;
   memory: StructuredMemory;
 }
 

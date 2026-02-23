@@ -87,6 +87,7 @@ interface DebateStoreActions {
   // Guests
   addGuest: (roomId: string, guest: Omit<Guest, "id" | "memory">) => void;
   removeGuest: (roomId: string, guestId: string) => void;
+  updateGuestModel: (roomId: string, guestId: string, model: string) => void;
   updateGuestMemory: (roomId: string, guestId: string, memory: StructuredMemory) => void;
 
   // Messages
@@ -226,6 +227,20 @@ export const useDebateStore = create<DebateStore>()(
           rooms: state.rooms.map((r) =>
             r.id === roomId
               ? { ...r, guests: r.guests.filter((g) => g.id !== guestId) }
+              : r
+          ),
+        })),
+
+      updateGuestModel: (roomId, guestId, model) =>
+        set((state) => ({
+          rooms: state.rooms.map((r) =>
+            r.id === roomId
+              ? {
+                  ...r,
+                  guests: r.guests.map((g) =>
+                    g.id === guestId ? { ...g, model } : g
+                  ),
+                }
               : r
           ),
         })),

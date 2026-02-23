@@ -64,6 +64,11 @@ export function GuestsTab() {
                       <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">
                         {guest.personality}
                       </p>
+                      {guest.model && (
+                        <p className="text-[10px] text-indigo-400/70 mt-0.5 truncate">
+                          {guest.model}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <button
@@ -120,6 +125,7 @@ export function GuestsTab() {
 
       <GuestDetailDialog
         guest={selectedGuest}
+        roomId={activeRoomId}
         onClose={() => setSelectedGuest(null)}
       />
     </>

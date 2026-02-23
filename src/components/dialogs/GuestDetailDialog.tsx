@@ -3,13 +3,19 @@
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Guest } from "@/store/types";
+import { useDebateStore } from "@/store/debate-store";
+import { ModelSelector } from "@/components/right-panel/ModelSelector";
 
 interface GuestDetailDialogProps {
   guest: Guest | null;
+  roomId: string | null;
   onClose: () => void;
 }
 
-export function GuestDetailDialog({ guest, onClose }: GuestDetailDialogProps) {
+export function GuestDetailDialog({ guest, roomId, onClose }: GuestDetailDialogProps) {
+  const updateGuestModel = useDebateStore((s) => s.updateGuestModel);
+  const selectedGuestModel = useDebateStore((s) => s.selectedGuestModel);
+
   if (!guest) return null;
 
   const { memory } = guest;
@@ -18,6 +24,8 @@ export function GuestDetailDialog({ guest, onClose }: GuestDetailDialogProps) {
   const hasOtherGuestsSummary = memory.other_guests_summary.trim().length > 0;
   const hasUserPrefs = memory.user_preferences.trim().length > 0;
   const hasMemory = hasPositions || hasKeyMoments || hasOtherGuestsSummary || hasUserPrefs;
+
+  const effectiveModel = guest.model || selectedGuestModel;
 
   return (
     <Modal isOpen={!!guest} onClose={onClose} title={guest.name} maxWidth="max-w-md">
@@ -39,6 +47,22 @@ export function GuestDetailDialog({ guest, onClose }: GuestDetailDialogProps) {
           <p className="text-sm text-slate-300 leading-relaxed">
             {guest.personality}
           </p>
+        </div>
+
+        {/* Model selector */}
+        <div className="border-t border-slate-700 pt-3">
+          <ModelSelector
+            label="Model"
+            value={effectiveModel}
+            onChange={(modelId) => {
+              if (roomId) updateGuestModel(roomId, guest.id, modelId);
+            }}
+          />
+          {!guest.model && selectedGuestModel && (
+            <p className="text-[10px] text-slate-500 mt-1">
+              Using default guest model. Select a different model to override.
+            </p>
+          )}
         </div>
 
         {!hasMemory && (

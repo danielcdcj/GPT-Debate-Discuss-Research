@@ -39,7 +39,7 @@ export function ConfigTab() {
         onChange={setSelectedHostModel}
       />
       <ModelSelector
-        label="Guest Model"
+        label="Default Guest Model"
         value={selectedGuestModel}
         onChange={setSelectedGuestModel}
       />

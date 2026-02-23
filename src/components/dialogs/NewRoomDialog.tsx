@@ -19,6 +19,7 @@ interface GeneratedGuest {
   name: string;
   avatar: string;
   personality: string;
+  model: string;
 }
 
 const AVATAR_POOL = [
@@ -37,7 +38,8 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
   const [style, setStyle] = useState<DebateStyle>("balanced");
   const [maxRounds, setMaxRounds] = useState(10);
   const [customInstructions, setCustomInstructions] = useState("");
-  const [hostModel, setHostModel] = useState("openai/gpt-4.1");
+  const [hostModel, setHostModel] = useState("openai/gpt-oss-120b");
+  const [defaultGuestModel, setDefaultGuestModel] = useState("x-ai/grok-4.1-mini");
 
   // Step 2 state
   const [step, setStep] = useState<1 | 2>(1);
@@ -63,7 +65,8 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
     setStyle("balanced");
     setMaxRounds(10);
     setCustomInstructions("");
-    setHostModel("openai/gpt-4.1");
+    setHostModel("openai/gpt-oss-120b");
+    setDefaultGuestModel("x-ai/grok-4.1-mini");
     setStep(1);
     setGuests([]);
     setIsGenerating(false);
@@ -124,6 +127,7 @@ Rules:
           name: g.name,
           avatar: AVATAR_POOL[i % AVATAR_POOL.length],
           personality: g.personality,
+          model: defaultGuestModel,
         })
       );
 
@@ -153,12 +157,9 @@ Rules:
   const handleCreate = () => {
     if (!name.trim() || !topic.trim() || guests.length < 2) return;
 
-    // Set models globally — use host model for guests too if no guest model set
+    // Set models globally
     setSelectedHostModel(hostModel);
-    const currentGuestModel = useDebateStore.getState().selectedGuestModel;
-    if (!currentGuestModel) {
-      setSelectedGuestModel(hostModel);
-    }
+    setSelectedGuestModel(defaultGuestModel);
 
     // Create the room
     const roomId = createRoom(name.trim(), topic.trim(), {
@@ -167,12 +168,13 @@ Rules:
       customInstructions: customInstructions.trim(),
     });
 
-    // Add all guests
+    // Add all guests with their individual models
     for (const guest of guests) {
       addGuest(roomId, {
         name: guest.name,
         avatar: guest.avatar,
         personality: guest.personality,
+        model: guest.model,
       });
     }
 
@@ -200,6 +202,7 @@ Rules:
         name: newGuestName.trim(),
         avatar: AVATAR_POOL[prev.length % AVATAR_POOL.length],
         personality: newGuestPersonality.trim(),
+        model: defaultGuestModel,
       },
     ]);
     setNewGuestName("");
@@ -252,6 +255,12 @@ Rules:
             label="Host Model"
             value={hostModel}
             onChange={setHostModel}
+          />
+
+          <ModelSelector
+            label="Default Guest Model"
+            value={defaultGuestModel}
+            onChange={setDefaultGuestModel}
           />
 
           <div className="flex flex-col gap-1.5">
@@ -360,6 +369,13 @@ Rules:
                       rows={3}
                       className="w-full text-xs text-slate-300 bg-slate-900/50 rounded-md border border-slate-700 px-2.5 py-2 focus:border-indigo-500 focus:outline-none resize-none"
                     />
+                    <div className="mt-2">
+                      <ModelSelector
+                        label="Model"
+                        value={guest.model}
+                        onChange={(modelId) => updateGuest(index, { model: modelId })}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>

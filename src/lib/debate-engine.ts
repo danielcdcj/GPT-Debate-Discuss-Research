@@ -278,8 +278,8 @@ async function runGuestRound(
   if (!room) return null;
 
   const apiKey = store.apiKey;
-  const guestModel = store.selectedGuestModel;
-  if (!guestModel) return null;
+  const defaultGuestModel = store.selectedGuestModel;
+  if (!defaultGuestModel) return null;
 
   store.setPhase(roomId, "GUESTS_RESPONDING");
 
@@ -291,6 +291,9 @@ async function runGuestRound(
       .join("\n\n---\n\n") || undefined;
 
   const guestPromises = room.guests.map(async (guest) => {
+    // Use per-guest model if set, otherwise fall back to global guest model
+    const guestModel = guest.model || defaultGuestModel;
+
     const msgId = getStore().addMessage(roomId, {
       role: "guest",
       content: "",

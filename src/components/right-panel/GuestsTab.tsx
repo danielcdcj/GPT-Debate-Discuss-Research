@@ -4,9 +4,12 @@ import React, { useState } from "react";
 import { useDebateStore } from "@/store/debate-store";
 import { Button } from "@/components/ui/Button";
 import { AddGuestDialog } from "@/components/dialogs/AddGuestDialog";
+import { GuestDetailDialog } from "@/components/dialogs/GuestDetailDialog";
+import { Guest } from "@/store/types";
 
 export function GuestsTab() {
   const [showAddGuest, setShowAddGuest] = useState(false);
+  const [selectedGuest, setSelectedGuest] = useState<Guest | null>(null);
   const activeRoomId = useDebateStore((s) => s.activeRoomId);
   const rooms = useDebateStore((s) => s.rooms);
   const room = rooms.find((r) => r.id === activeRoomId);
@@ -48,7 +51,8 @@ export function GuestsTab() {
             {room.guests.map((guest) => (
               <div
                 key={guest.id}
-                className="bg-slate-800 rounded-lg border border-slate-700 p-3"
+                className="bg-slate-800 rounded-lg border border-slate-700 p-3 cursor-pointer hover:border-slate-500 hover:bg-slate-750 transition-colors"
+                onClick={() => setSelectedGuest(guest)}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2">
@@ -63,7 +67,10 @@ export function GuestsTab() {
                     </div>
                   </div>
                   <button
-                    onClick={() => removeGuest(room.id, guest.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeGuest(room.id, guest.id);
+                    }}
                     className="text-slate-500 hover:text-red-400 transition-colors p-1 shrink-0"
                   >
                     <svg
@@ -109,6 +116,11 @@ export function GuestsTab() {
       <AddGuestDialog
         isOpen={showAddGuest}
         onClose={() => setShowAddGuest(false)}
+      />
+
+      <GuestDetailDialog
+        guest={selectedGuest}
+        onClose={() => setSelectedGuest(null)}
       />
     </>
   );

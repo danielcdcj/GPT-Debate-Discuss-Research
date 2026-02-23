@@ -55,7 +55,7 @@ export function ModelSelector({ label, value, onChange }: ModelSelectorProps) {
         </button>
 
         {isOpen && (
-          <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl max-h-[300px] overflow-hidden">
+          <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl max-h-[300px] overflow-hidden">
             <div className="p-2 border-b border-slate-700">
               <input
                 type="text"

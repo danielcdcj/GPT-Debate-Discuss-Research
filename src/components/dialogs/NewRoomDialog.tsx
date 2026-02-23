@@ -71,9 +71,9 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
 
-  // New guest form
-  const [newGuestName, setNewGuestName] = useState("");
-  const [newGuestPersonality, setNewGuestPersonality] = useState("");
+  // Guest editor modal
+  const [guestEditorOpen, setGuestEditorOpen] = useState(false);
+  const [editingGuestIndex, setEditingGuestIndex] = useState<number | null>(null);
 
   // ── Reset state on close ──
 
@@ -90,8 +90,8 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
     setIsGenerating(false);
     setGenerateError(null);
     setIsStarting(false);
-    setNewGuestName("");
-    setNewGuestPersonality("");
+    setGuestEditorOpen(false);
+    setEditingGuestIndex(null);
     onClose();
   }
 
@@ -160,27 +160,29 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
     setGuests((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function addGuest() {
-    if (!newGuestName.trim() || !newGuestPersonality.trim()) return;
+  function openAddGuest() {
+    setEditingGuestIndex(null);
+    setGuestEditorOpen(true);
+  }
 
-    const usedAvatars = new Set(guests.map((g) => g.avatar));
-    const available = AVATAR_POOL.filter((a) => !usedAvatars.has(a));
-    const avatar = available.length > 0
-      ? available[Math.floor(Math.random() * available.length)]
-      : AVATAR_POOL[Math.floor(Math.random() * AVATAR_POOL.length)];
+  function openEditGuest(index: number) {
+    setEditingGuestIndex(index);
+    setGuestEditorOpen(true);
+  }
 
-    setGuests((prev) => [
-      ...prev,
-      {
-        name: newGuestName.trim(),
-        avatar,
-        personality: newGuestPersonality.trim(),
-        model: guestModel,
-      },
-    ]);
+  function handleGuestEditorSave(guest: GeneratedGuest) {
+    if (editingGuestIndex !== null) {
+      updateGuest(editingGuestIndex, guest);
+    } else {
+      setGuests((prev) => [...prev, guest]);
+    }
+    setGuestEditorOpen(false);
+    setEditingGuestIndex(null);
+  }
 
-    setNewGuestName("");
-    setNewGuestPersonality("");
+  function handleGuestEditorClose() {
+    setGuestEditorOpen(false);
+    setEditingGuestIndex(null);
   }
 
   // ── Start conversation ──
@@ -226,9 +228,10 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
   // ── Render ──
 
   return (
+  <>
     <Modal
       isOpen={isOpen}
-      onClose={handleClose}
+      onClose={guestEditorOpen ? () => {} : handleClose}
       title={step === 1 ? "New Conversation" : "Configure Guests"}
       maxWidth="max-w-2xl"
     >
@@ -329,72 +332,65 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
           {/* Guest cards */}
           {!isGenerating && !generateError && guests.length > 0 && (
             <>
-              <div className="space-y-3">
-                {guests.map((guest, index) => (
-                  <div
-                    key={index}
-                    className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <span className="text-2xl shrink-0">{guest.avatar}</span>
-                        <Input
-                          value={guest.name}
-                          onChange={(e) => updateGuest(index, { name: e.target.value })}
-                          className="!py-1.5"
-                        />
+              <div className="space-y-2">
+                {guests.map((guest, index) => {
+                  const firstLine = guest.personality.split("\n")[0];
+                  const preview =
+                    firstLine.length > 80
+                      ? firstLine.slice(0, 80) + "..."
+                      : firstLine +
+                        (guest.personality.includes("\n") || firstLine.length < guest.personality.length
+                          ? "..."
+                          : "");
+
+                  return (
+                    <div
+                      key={index}
+                      className="group flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 hover:bg-white/[0.04] transition-colors"
+                    >
+                      <span className="text-xl shrink-0">{guest.avatar}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-white truncate">{guest.name}</p>
+                        <p className="text-xs text-slate-400 truncate">{preview}</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => removeGuest(index)}
-                        className="shrink-0 p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                        title="Remove guest"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openEditGuest(index)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                          title="Edit guest"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeGuest(index)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          title="Remove guest"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-
-                    <Textarea
-                      value={guest.personality}
-                      onChange={(e) => updateGuest(index, { personality: e.target.value })}
-                      rows={2}
-                      placeholder="Personality description..."
-                    />
-
-                    <ModelSelector
-                      label="Model"
-                      value={guest.model}
-                      onChange={(model) => updateGuest(index, { model })}
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
-              {/* Add guest section */}
-              <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.01] p-4 space-y-3">
-                <p className="text-xs font-medium text-slate-400">Add Another Guest</p>
-                <Input
-                  placeholder="Guest name..."
-                  value={newGuestName}
-                  onChange={(e) => setNewGuestName(e.target.value)}
-                />
-                <Textarea
-                  placeholder="Personality and expertise..."
-                  rows={2}
-                  value={newGuestPersonality}
-                  onChange={(e) => setNewGuestPersonality(e.target.value)}
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={addGuest}
-                  disabled={!newGuestName.trim() || !newGuestPersonality.trim()}
-                >
-                  + Add Guest
-                </Button>
-              </div>
+              {/* Add guest button */}
+              <button
+                type="button"
+                onClick={openAddGuest}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.01] px-4 py-3 text-sm text-slate-400 hover:border-indigo-500/30 hover:text-indigo-400 hover:bg-indigo-500/5 transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Guest
+              </button>
 
               {/* Regenerate button */}
               <div className="flex justify-center">
@@ -429,6 +425,137 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
           </div>
         </div>
       )}
+    </Modal>
+
+    {/* Guest editor modal — layered on top */}
+    <GuestEditorModal
+      isOpen={guestEditorOpen}
+      onClose={handleGuestEditorClose}
+      onSave={handleGuestEditorSave}
+      guest={editingGuestIndex !== null ? guests[editingGuestIndex] : null}
+      defaultModel={guestModel}
+    />
+  </>
+  );
+}
+
+// ─── Guest Editor Modal ──────────────────────────────────────────────
+
+interface GuestEditorModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (guest: GeneratedGuest) => void;
+  /** Pass existing guest for edit mode, null for add mode */
+  guest: GeneratedGuest | null;
+  defaultModel: string;
+}
+
+function GuestEditorModal({
+  isOpen,
+  onClose,
+  onSave,
+  guest,
+  defaultModel,
+}: GuestEditorModalProps) {
+  const [name, setName] = useState("");
+  const [personality, setPersonality] = useState("");
+  const [avatar, setAvatar] = useState(
+    AVATAR_POOL[Math.floor(Math.random() * AVATAR_POOL.length)]
+  );
+  const [model, setModel] = useState(defaultModel);
+
+  // Sync fields when the modal opens or the guest changes
+  React.useEffect(() => {
+    if (isOpen) {
+      if (guest) {
+        setName(guest.name);
+        setPersonality(guest.personality);
+        setAvatar(guest.avatar);
+        setModel(guest.model);
+      } else {
+        setName("");
+        setPersonality("");
+        setAvatar(AVATAR_POOL[Math.floor(Math.random() * AVATAR_POOL.length)]);
+        setModel(defaultModel);
+      }
+    }
+  }, [isOpen, guest, defaultModel]);
+
+  function handleSave() {
+    if (!name.trim() || !personality.trim()) return;
+    onSave({ name: name.trim(), personality: personality.trim(), avatar, model });
+  }
+
+  const isEditing = guest !== null;
+  const canSave = name.trim().length > 0 && personality.trim().length > 0;
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={isEditing ? "Edit Guest" : "Add Guest"}
+      maxWidth="max-w-lg"
+      zIndex="z-[60]"
+    >
+      <div className="space-y-5">
+        {/* Avatar Picker */}
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-slate-400">Avatar</label>
+          <div className="flex flex-wrap gap-1.5">
+            {AVATAR_POOL.map((a) => (
+              <button
+                key={a}
+                type="button"
+                onClick={() => setAvatar(a)}
+                className={`
+                  w-9 h-9 rounded-lg flex items-center justify-center text-lg transition-all duration-150
+                  ${
+                    avatar === a
+                      ? "bg-indigo-500/20 ring-2 ring-indigo-500 scale-110"
+                      : "bg-white/[0.03] hover:bg-white/[0.08] hover:scale-105"
+                  }
+                `}
+              >
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Name */}
+        <Input
+          label="Name"
+          placeholder="e.g., The Historian, Dr. Smith"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+
+        {/* Personality */}
+        <Textarea
+          label="Personality"
+          placeholder="Describe their expertise, perspective, debating style, and specific angle..."
+          rows={4}
+          value={personality}
+          onChange={(e) => setPersonality(e.target.value)}
+        />
+
+        {/* Model Selector */}
+        <ModelSelector
+          label="Model"
+          value={model}
+          onChange={setModel}
+        />
+
+        {/* Actions */}
+        <div className="flex justify-end gap-3 pt-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={!canSave}>
+            {isEditing ? "Save Changes" : "Add Guest"}
+          </Button>
+        </div>
+      </div>
     </Modal>
   );
 }

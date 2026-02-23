@@ -8,6 +8,8 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   maxWidth?: string;
+  /** Custom z-index class for layered modals (default: "z-50") */
+  zIndex?: string;
 }
 
 export function Modal({
@@ -16,6 +18,7 @@ export function Modal({
   title,
   children,
   maxWidth = "max-w-lg",
+  zIndex = "z-50",
 }: ModalProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -38,7 +41,7 @@ export function Modal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center animate-fadeIn">
+    <div className={`fixed inset-0 ${zIndex} flex items-center justify-center animate-fadeIn`}>
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
         onClick={onClose}

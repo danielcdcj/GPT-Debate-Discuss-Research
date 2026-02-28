@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useStoreState, useStoreActions } from "@/hooks/useEngine";
 import type { Phase } from "@/core/types";
 import { Button } from "@/components/ui/Button";
@@ -309,6 +309,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useStoreState(
     useCallback((s) => s.isAuthenticated, [])
   );
+  const apiKey = useStoreState(useCallback((s) => s.apiKey, []));
+  const modelsCount = useStoreState(useCallback((s) => s.models.length, []));
+  const modelsLoading = useStoreState(useCallback((s) => s.modelsLoading, []));
+  const actions = useStoreActions();
+
   const activeRoomPhase = useStoreState(
     useCallback(
       (s): Phase | null => {
@@ -319,6 +324,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       []
     )
   );
+
+  // Auto-fetch models when authenticated but list is empty (e.g. page refresh)
+  useEffect(() => {
+    if (isAuthenticated && apiKey && modelsCount === 0 && !modelsLoading) {
+      actions.setModelsLoading(true);
+      fetchModels(apiKey)
+        .then((models) => actions.setModels(models))
+        .catch(() => {
+          // Silently fail — user can still use the app with manual model IDs
+        })
+        .finally(() => actions.setModelsLoading(false));
+    }
+  }, [isAuthenticated, apiKey, modelsCount, modelsLoading, actions]);
 
   // Show login screen when not authenticated
   if (!isAuthenticated) {

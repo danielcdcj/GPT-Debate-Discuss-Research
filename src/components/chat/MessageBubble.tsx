@@ -49,6 +49,35 @@ const roleStyles = {
   },
 } as const;
 
+// Intent-specific styles
+const intentStyles: Record<string, { borderColor: string; badge: string; badgeColor: string }> = {
+  exchange: {
+    borderColor: "border-cyan-500",
+    badge: "Exchange",
+    badgeColor: "bg-cyan-500/15 text-cyan-300",
+  },
+  rebuttal: {
+    borderColor: "border-orange-500",
+    badge: "Rebuttal",
+    badgeColor: "bg-orange-500/15 text-orange-300",
+  },
+  challenge_response: {
+    borderColor: "border-red-400",
+    badge: "Defending",
+    badgeColor: "bg-red-500/15 text-red-300",
+  },
+  synthesis: {
+    borderColor: "border-purple-500",
+    badge: "Synthesis",
+    badgeColor: "bg-purple-500/15 text-purple-300",
+  },
+  fact_check_result: {
+    borderColor: "border-yellow-500",
+    badge: "Fact Check",
+    badgeColor: "bg-yellow-500/15 text-yellow-300",
+  },
+};
+
 function formatTimestamp(ts: number): string {
   const d = new Date(ts);
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -65,27 +94,53 @@ function StreamingCursor() {
 // -- System message (special layout, no bubble) --
 
 function SystemMessage({ message }: { message: Message }) {
+  const isFactCheck = message.intent === "fact_check_result";
   return (
     <div className="flex justify-center py-2">
-      <div className="flex items-center gap-2 text-xs text-amber-400/80 max-w-lg text-center">
-        <svg
-          className="w-3.5 h-3.5 shrink-0 text-amber-400"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"
-          />
-        </svg>
+      <div className={`flex items-center gap-2 text-xs max-w-lg text-center ${isFactCheck ? "text-yellow-400/90" : "text-amber-400/80"}`}>
+        {!isFactCheck && (
+          <svg
+            className="w-3.5 h-3.5 shrink-0 text-amber-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"
+            />
+          </svg>
+        )}
         <span className={message.isError ? "text-red-400" : ""}>
-          {message.content}
+          <MarkdownContent content={message.content} isSummary={false} />
         </span>
       </div>
     </div>
+  );
+}
+
+// -- Reply-to indicator --
+
+function ReplyIndicator({ replyToGuestName }: { replyToGuestName: string }) {
+  return (
+    <div className="flex items-center gap-1 mb-1 text-[10px] text-slate-500">
+      <svg className="w-3 h-3 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+      </svg>
+      <span>Replying to <span className="text-emerald-400/70">{replyToGuestName}</span></span>
+    </div>
+  );
+}
+
+// -- Exchange round badge --
+
+function ExchangeRoundBadge({ round }: { round: number }) {
+  return (
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400/70 ml-1">
+      Round {round}
+    </span>
   );
 }
 
@@ -93,6 +148,8 @@ function SystemMessage({ message }: { message: Message }) {
 
 function RoleLabel({ message }: { message: Message }) {
   const style = roleStyles[message.role];
+  const intent = message.intent || "standard";
+  const intentStyle = intentStyles[intent];
 
   if (message.role === "host") {
     return (
@@ -116,6 +173,11 @@ function RoleLabel({ message }: { message: Message }) {
             Summary
           </span>
         )}
+        {intentStyle && (
+          <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded ${intentStyle.badgeColor}`}>
+            {intentStyle.badge}
+          </span>
+        )}
       </div>
     );
   }
@@ -125,6 +187,12 @@ function RoleLabel({ message }: { message: Message }) {
       <div className={`flex items-center gap-1.5 text-xs font-medium ${style.nameColor}`}>
         <span className="text-sm">{message.guestAvatar || "?"}</span>
         <span>{message.guestName || "Guest"}</span>
+        {intentStyle && (
+          <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded ${intentStyle.badgeColor}`}>
+            {intentStyle.badge}
+          </span>
+        )}
+        {message.exchangeRound && <ExchangeRoundBadge round={message.exchangeRound} />}
       </div>
     );
   }
@@ -200,6 +268,8 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isSummary = message.isSummary;
   const isError = message.isError;
+  const intent = message.intent || "standard";
+  const intentStyle = intentStyles[intent];
 
   const bubbleBg = useMemo(() => {
     if (isError) return "bg-red-500/5";
@@ -213,8 +283,15 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         ? "border-r-[3px] border-red-500"
         : "border-l-[3px] border-red-500";
     }
+    // Use intent-specific border color for special message types
+    if (intentStyle && message.role === "guest") {
+      return `border-l-[3px] ${intentStyle.borderColor}`;
+    }
+    if (intentStyle && message.role === "host") {
+      return `border-l-[3px] ${intentStyle.borderColor}`;
+    }
     return style.border;
-  }, [isError, isUser, style]);
+  }, [isError, isUser, style, intentStyle, message.role]);
 
   return (
     <div className={`flex ${style.alignment} px-4 py-1`}>
@@ -228,14 +305,16 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           transition-colors duration-150
         `}
         style={{
-          border: isError
-            ? undefined
-            : undefined,
           boxShadow: isSummary
             ? "0 0 20px rgba(99, 102, 241, 0.04)"
             : undefined,
         }}
       >
+        {/* Reply-to indicator */}
+        {message.replyToGuestName && (
+          <ReplyIndicator replyToGuestName={message.replyToGuestName} />
+        )}
+
         {/* Role label */}
         <div className={`mb-1.5 ${isUser ? "text-right" : "text-left"}`}>
           <RoleLabel message={message} />

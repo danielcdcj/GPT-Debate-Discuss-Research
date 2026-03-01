@@ -204,6 +204,7 @@ export class DebateStore extends EventEmitter<DebateEventMap> {
       hostMemory: emptyStructuredMemory(),
       pendingUserMessages: [],
       createdAt: Date.now(),
+      debateIntensity: 0,
     };
     this.update({
       rooms: [room, ...this.state.rooms],
@@ -365,6 +366,12 @@ export class DebateStore extends EventEmitter<DebateEventMap> {
       ),
     }));
     this.emit("research:file:chunk", { roomId, fileId, chunk });
+  }
+
+  // ── Debate Intensity ──
+
+  updateDebateIntensity(roomId: string, intensity: number): void {
+    this.updateRoom(roomId, (r) => ({ ...r, debateIntensity: intensity }));
   }
 
   // ── UI State ──

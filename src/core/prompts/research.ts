@@ -29,3 +29,48 @@ Format your response as structured markdown:
 
 Stay neutral and factual. Do not take sides.`;
 }
+
+// ─── Fact-checking prompt ────────────────────────────────────────────
+
+interface FactCheckParams {
+  topic: string;
+  claim: string;
+  claimContext?: string;
+}
+
+export function factCheckPrompt(params: FactCheckParams): string {
+  const { topic, claim, claimContext } = params;
+
+  return `You are a fact-checker with expertise in verifying claims with authoritative sources.
+
+DEBATE TOPIC: ${topic}
+${claimContext ? `CONTEXT: ${claimContext}` : ""}
+
+CLAIM TO VERIFY:
+"${claim}"
+
+Your task is to determine the accuracy of this claim. Provide:
+
+## Verdict
+
+State one of:
+- **✅ Accurate** — The claim is well-supported by evidence
+- **⚠️ Partially Accurate** — Some truth but with important caveats or missing context
+- **❌ Inaccurate** — The claim is not supported by available evidence
+- **🔍 Unverifiable** — Cannot be confirmed or denied with available evidence
+
+## Evidence
+
+Provide specific evidence for your verdict:
+- Cite authoritative sources: [Source Name](URL)
+- Include specific data points, dates, or figures
+- Note any important context that changes how the claim should be interpreted
+
+## Nuance
+
+- What's the most charitable interpretation of this claim?
+- What context is missing?
+- How does this relate to the broader debate?
+
+Be fair, thorough, and precise. If a claim is roughly correct but imprecise, note the exact figures.`;
+}

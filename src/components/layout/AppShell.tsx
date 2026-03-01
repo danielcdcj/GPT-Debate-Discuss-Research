@@ -41,6 +41,16 @@ const PHASE_CONFIG: Record<Phase, { label: string; color: string; pulse: boolean
     color: "bg-violet-500/15 text-violet-400",
     pulse: true,
   },
+  GUEST_EXCHANGE: {
+    label: "Guests Debating",
+    color: "bg-cyan-500/15 text-cyan-400",
+    pulse: true,
+  },
+  FACT_CHECK: {
+    label: "Fact-Checking",
+    color: "bg-yellow-500/15 text-yellow-400",
+    pulse: true,
+  },
 };
 
 // ─── Phase Indicator ────────────────────────────────────────────────

@@ -39,6 +39,7 @@ export function useStoreState<T>(selector: (state: StoreState) => T): T {
       "host:memory:updated", "models:loaded", "models:loading",
       "auth:changed", "ui:rightPanelTab", "ui:sidebarCollapsed",
       "ui:mobileSidebarOpen", "ui:mobileRightPanelOpen",
+      "debate:intensity",
     ] as const;
 
     const unsubscribers = events.map((event) =>

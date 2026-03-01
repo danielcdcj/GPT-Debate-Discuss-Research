@@ -23,10 +23,12 @@ export async function runHostDecision(
     topic: room.topic,
     config: room.config,
     hostMemory: room.hostMemory,
+    guests: room.guests,
     guestSummaries: context.guestSummary,
     userMessage: context.userMessage,
     researchSummary: context.researchSummary,
     accumulatedContext: context.accumulatedContext,
+    debateIntensity: room.debateIntensity,
   });
 
   store.emit("host:deciding", { roomId });

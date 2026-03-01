@@ -1,7 +1,7 @@
 import type { DebateStore } from "./store";
-import { RESEARCHER_PROFILES } from "./types";
+import { RESEARCHER_PROFILES, FACT_CHECKER_PROFILE } from "./types";
 import { streamChatCompletion } from "./api";
-import { researcherPrompt } from "./prompts/research";
+import { researcherPrompt, factCheckPrompt } from "./prompts/research";
 
 export async function runResearchPhase(
   store: DebateStore,
@@ -70,4 +70,69 @@ export async function runResearchPhase(
 
   if (successful.length === 0) return null;
   return successful.join("\n\n---\n\n");
+}
+
+// ─── Fact Check ─────────────────────────────────────────────────────
+
+export async function runFactCheck(
+  store: DebateStore,
+  roomId: string,
+  claim: string
+): Promise<string | null> {
+  const state = store.getState();
+  const room = store.getRoom(roomId);
+  if (!room) return null;
+
+  const researchModel = state.selectedResearchModel || state.selectedHostModel;
+
+  store.setPhase(roomId, "FACT_CHECK");
+  store.setRightPanelTab("research");
+
+  const fileId = store.addResearchFile(roomId, {
+    title: `Fact Check: ${claim.slice(0, 80)}${claim.length > 80 ? "..." : ""}`,
+    researcher: FACT_CHECKER_PROFILE,
+    content: "",
+    isStreaming: true,
+  });
+
+  // Also add a visible message in chat for the fact check
+  store.addMessage(roomId, {
+    role: "system",
+    content: `🔍 **Fact-checking:** "${claim.slice(0, 120)}${claim.length > 120 ? "..." : ""}"`,
+    isStreaming: false,
+    isSummary: false,
+    isError: false,
+    intent: "fact_check_result",
+  });
+
+  const prompt = factCheckPrompt({
+    topic: room.topic,
+    claim,
+  });
+
+  return new Promise<string | null>((resolve) => {
+    streamChatCompletion(
+      state.apiKey,
+      researchModel,
+      [
+        { role: "system", content: prompt },
+        { role: "user", content: `Fact-check this claim: "${claim}"` },
+      ],
+      (chunk) => {
+        store.appendToResearchFile(roomId, fileId, chunk);
+      },
+      (fullText) => {
+        store.updateResearchFile(roomId, fileId, { isStreaming: false });
+        resolve(fullText);
+      },
+      (error) => {
+        store.updateResearchFile(roomId, fileId, {
+          isStreaming: false,
+          content: `Error: ${error.message}`,
+        });
+        resolve(null);
+      },
+      state.preferredProviders[researchModel]
+    );
+  });
 }

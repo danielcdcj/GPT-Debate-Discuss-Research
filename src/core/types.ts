@@ -22,11 +22,21 @@ export type Phase =
   | "HOST_THINKING"
   | "HOST_PRESENTING"
   | "GUESTS_RESPONDING"
-  | "RESEARCH_PHASE";
+  | "GUEST_EXCHANGE"
+  | "RESEARCH_PHASE"
+  | "FACT_CHECK";
 
 // ─── Messages ────────────────────────────────────────────────────────
 
 export type MessageRole = "host" | "guest" | "user" | "system";
+
+export type MessageIntent =
+  | "standard"
+  | "exchange"
+  | "rebuttal"
+  | "challenge_response"
+  | "fact_check_result"
+  | "synthesis";
 
 export interface Message {
   id: string;
@@ -39,6 +49,11 @@ export interface Message {
   isSummary: boolean;
   isError: boolean;
   timestamp: number;
+  // v2: threading and exchange context
+  intent?: MessageIntent;
+  replyToGuestId?: string;
+  replyToGuestName?: string;
+  exchangeRound?: number;
 }
 
 // ─── Guest Memory ────────────────────────────────────────────────────
@@ -103,6 +118,12 @@ export const RESEARCHER_PROFILES: ResearcherProfile[] = [
   { name: "Historical Analyst", emoji: "🏛️", focus: "historical context & precedents" },
 ];
 
+export const FACT_CHECKER_PROFILE: ResearcherProfile = {
+  name: "Fact Checker",
+  emoji: "🔍",
+  focus: "verification of specific claims with authoritative sources",
+};
+
 // ─── Room ────────────────────────────────────────────────────────────
 
 export interface Room {
@@ -118,14 +139,31 @@ export interface Room {
   hostMemory: StructuredMemory;
   pendingUserMessages: string[];
   createdAt: number;
+  // v2: debate intensity tracking
+  debateIntensity: number; // 0-1, how heated the debate is
 }
 
 // ─── Host Decision ──────────────────────────────────────────────────
 
+export type HostAction =
+  | "research"
+  | "guests"
+  | "exchange"
+  | "challenge"
+  | "fact_check"
+  | "synthesize"
+  | "deep_dive"
+  | "ask_user"
+  | "conclude";
+
 export interface HostDecision {
-  action: "research" | "guests" | "ask_user" | "conclude";
+  action: HostAction;
   message: string;
   research_queries?: string[];
+  // v2: targeted actions
+  target_guests?: string[];     // guest names for exchange/challenge
+  claim_to_check?: string;      // for fact_check
+  subtopic?: string;            // for deep_dive
 }
 
 // ─── Models ──────────────────────────────────────────────────────────
@@ -150,4 +188,4 @@ export interface ModelConfig {
 
 // ─── UI State ────────────────────────────────────────────────────────
 
-export type RightPanelTab = "config" | "guests" | "research";
+export type RightPanelTab = "config" | "guests" | "research" | "positions";

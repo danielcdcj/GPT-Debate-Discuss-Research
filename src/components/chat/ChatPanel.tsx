@@ -5,6 +5,7 @@ import { useStoreState } from "@/hooks/useEngine";
 import type { Message, Room } from "@/core/types";
 import MessageBubble from "./MessageBubble";
 import ChatInput from "./ChatInput";
+import SteeringControls from "./SteeringControls";
 
 // -- Empty state when no room is selected --
 
@@ -154,6 +155,9 @@ export function ChatPanel() {
         {/* Scroll anchor -- invisible element at the bottom */}
         <div ref={scrollAnchorRef} className="h-px" />
       </div>
+
+      {/* Steering controls */}
+      <SteeringControls roomId={activeRoomId} />
 
       {/* Chat input pinned to bottom */}
       <ChatInput roomId={activeRoomId} />

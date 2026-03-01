@@ -60,6 +60,9 @@ export interface DebateEventMap {
   "ui:mobileSidebarOpen": { open: boolean };
   "ui:mobileRightPanelOpen": { open: boolean };
 
+  // Debate dynamics
+  "debate:intensity": { roomId: string; intensity: number };
+
   // State snapshot (for full re-sync)
   "state:snapshot": { rooms: Room[] };
 }

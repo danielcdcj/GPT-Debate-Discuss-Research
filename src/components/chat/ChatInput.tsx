@@ -20,8 +20,12 @@ function getPhaseStatusText(phase: Phase): string | null {
       return "Host is presenting...";
     case "GUESTS_RESPONDING":
       return "Guests responding...";
+    case "GUEST_EXCHANGE":
+      return "Guests debating each other...";
     case "RESEARCH_PHASE":
       return "Researching...";
+    case "FACT_CHECK":
+      return "Fact-checking...";
     case "IDLE":
       return "Start a debate to begin chatting";
     default:

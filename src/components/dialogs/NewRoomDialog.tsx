@@ -23,7 +23,7 @@ const AVATAR_POOL = [
 ];
 
 const DEFAULT_HOST_MODEL = "openai/gpt-oss-120b";
-const DEFAULT_GUEST_MODEL = "x-ai/grok-4.1-mini";
+const DEFAULT_GUEST_MODEL = "x-ai/grok-4.1-fast";
 
 const DEBATE_STYLE_OPTIONS: Array<{ value: DebateStyle; label: string }> = [
   { value: "balanced", label: "Balanced -- Equal weight to all perspectives" },

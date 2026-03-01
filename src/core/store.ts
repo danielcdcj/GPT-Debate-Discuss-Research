@@ -49,7 +49,7 @@ function initialState(): StoreState {
     models: [],
     modelsLoading: false,
     selectedHostModel: "openai/gpt-oss-120b",
-    selectedGuestModel: "x-ai/grok-4.1-mini",
+    selectedGuestModel: "x-ai/grok-4.1-fast",
     selectedResearchModel: "",
     preferredProviders: {},
     rooms: [],

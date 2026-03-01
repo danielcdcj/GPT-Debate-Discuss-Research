@@ -11,15 +11,20 @@ interface GuestResponseParams {
   memory: GuestMemory;
   hostMessage: string;
   researchContext?: string;
+  precedingResponses?: Array<{ name: string; response: string }>;
 }
 
 export function guestResponsePrompt(params: GuestResponseParams): string {
-  const { guestName, personality, topic, memory, hostMessage, researchContext } = params;
+  const { guestName, personality, topic, memory, hostMessage, researchContext, precedingResponses } = params;
 
   const recentHistory = memory.history.slice(-MAX_HISTORY_IN_PROMPT);
   const historyText = recentHistory.length > 0
     ? formatHistory(recentHistory)
     : "No conversation history yet.";
+
+  const precedingText = precedingResponses && precedingResponses.length > 0
+    ? `OTHER GUESTS HAVE ALREADY RESPONDED (in order):\n${precedingResponses.map((r) => `**${r.name}** said:\n"${r.response}"`).join("\n\n---\n\n")}\n\n`
+    : "";
 
   return `You are ${guestName}, a participant in a live structured debate/discussion.
 
@@ -37,10 +42,10 @@ ${historyText}
 ${researchContext ? `RESEARCH DATA AVAILABLE:\nThe following research has been gathered. You may reference, critique, or build upon these findings.\n\n${researchContext}\n` : ""}THE HOST JUST SAID:
 ${hostMessage}
 
-Respond in character. Be specific, substantive, and true to your personality.
+${precedingText}Respond in character. Be specific, substantive, and true to your personality.
 - Reference your evolving stances when relevant
 - Directly engage with what other participants have said — agree, disagree, build on, or challenge their specific points
-- If another guest made a claim you find questionable, say so explicitly and explain why
+${precedingResponses && precedingResponses.length > 0 ? "- You've heard the other guests above. React to their points directly — agree, push back, build on their arguments, or point out what they missed.\n- Don't just repeat what they said. Add YOUR unique perspective.\n" : ""}- If another guest made a claim you find questionable, say so explicitly and explain why
 - If research data is available, cite specific findings to support or challenge points
 - Be willing to update your position if evidence warrants it — say "I've changed my mind on X because..."
 - Keep your response under 300 words unless the topic demands more`;
@@ -156,10 +161,15 @@ interface DeepDiveResponseParams {
   subtopic: string;
   hostMessage: string;
   researchContext?: string;
+  precedingResponses?: Array<{ name: string; response: string }>;
 }
 
 export function deepDiveResponsePrompt(params: DeepDiveResponseParams): string {
-  const { guestName, personality, topic, memory, subtopic, hostMessage, researchContext } = params;
+  const { guestName, personality, topic, memory, subtopic, hostMessage, researchContext, precedingResponses } = params;
+
+  const precedingText = precedingResponses && precedingResponses.length > 0
+    ? `OTHER GUESTS HAVE ALREADY RESPONDED (in order):\n${precedingResponses.map((r) => `**${r.name}** said:\n"${r.response}"`).join("\n\n---\n\n")}\n\n`
+    : "";
 
   return `You are ${guestName}, and the debate is now DEEP DIVING into a specific subtopic.
 
@@ -175,12 +185,12 @@ ${JSON.stringify(memory.structured)}
 ${researchContext ? `RESEARCH DATA:\n${researchContext}\n` : ""}THE HOST SAID:
 ${hostMessage}
 
-INSTRUCTIONS:
+${precedingText}INSTRUCTIONS:
 - Focus specifically on "${subtopic}" — don't drift to the broader topic.
 - Bring your unique expertise to bear on this specific angle.
 - Be detailed and substantive. This is where deep knowledge matters.
 - Reference any relevant research data.
-- If this subtopic reveals tensions with your broader position, address that honestly.
+${precedingResponses && precedingResponses.length > 0 ? "- React to what the other guests said above. Build on their points or challenge them.\n" : ""}- If this subtopic reveals tensions with your broader position, address that honestly.
 - Keep to 250 words.`;
 }
 

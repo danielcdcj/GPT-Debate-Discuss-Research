@@ -10,7 +10,49 @@ import {
 } from "./prompts/guest";
 import { addToHistory } from "./memory";
 
-// ─── Standard guest round (all guests respond to host) ──────────────
+type GuestResult = { guestId: string; guestName: string; response: string };
+
+// ─── Helper: stream a single guest response ─────────────────────────
+
+function streamOneGuest(
+  store: DebateStore,
+  roomId: string,
+  apiKey: string,
+  model: string,
+  msgId: string,
+  systemPrompt: string,
+  userContent: string,
+  providers?: string[]
+): Promise<string> {
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userContent },
+  ];
+
+  return new Promise<string>((resolve, reject) => {
+    streamChatCompletion(
+      apiKey,
+      model,
+      messages,
+      (chunk) => store.appendToMessage(roomId, msgId, chunk),
+      (fullText) => {
+        store.updateMessage(roomId, msgId, { isStreaming: false });
+        resolve(fullText);
+      },
+      (error) => {
+        store.updateMessage(roomId, msgId, {
+          isStreaming: false,
+          isError: true,
+          content: `Error: ${error.message}`,
+        });
+        reject(error);
+      },
+      providers
+    );
+  });
+}
+
+// ─── Standard guest round (guests respond one-by-one) ───────────────
 
 export async function runGuestRound(
   store: DebateStore,
@@ -29,7 +71,10 @@ export async function runGuestRound(
   const researchContext = buildResearchContext(store, roomId);
   const currentRound = room.round;
 
-  const guestPromises = room.guests.map(async (guest) => {
+  // Guests speak one-by-one so each can react to what came before
+  const guestResponses: GuestResult[] = [];
+
+  for (const guest of room.guests) {
     const guestModel = guest.model || defaultGuestModel;
 
     const msgId = store.addMessage(roomId, {
@@ -51,41 +96,20 @@ export async function runGuestRound(
       memory: guest.memory,
       hostMessage,
       researchContext,
+      precedingResponses: guestResponses.map((r) => ({ name: r.guestName, response: r.response })),
     });
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: hostMessage },
-    ];
+    try {
+      const response = await streamOneGuest(
+        store, roomId, state.apiKey, guestModel, msgId,
+        systemPrompt, hostMessage, state.preferredProviders[guestModel]
+      );
+      guestResponses.push({ guestId: guest.id, guestName: guest.name, response });
+    } catch {
+      // Skip this guest, continue with others
+    }
+  }
 
-    return new Promise<{ guestId: string; guestName: string; response: string }>(
-      (resolve, reject) => {
-        streamChatCompletion(
-          state.apiKey,
-          guestModel,
-          messages,
-          (chunk) => {
-            store.appendToMessage(roomId, msgId, chunk);
-          },
-          (fullText) => {
-            store.updateMessage(roomId, msgId, { isStreaming: false });
-            resolve({ guestId: guest.id, guestName: guest.name, response: fullText });
-          },
-          (error) => {
-            store.updateMessage(roomId, msgId, {
-              isStreaming: false,
-              isError: true,
-              content: `Error: ${error.message}`,
-            });
-            reject(error);
-          },
-          state.preferredProviders[guestModel]
-        );
-      }
-    );
-  });
-
-  const guestResponses = await collectGuestResponses(guestPromises);
   if (guestResponses.length === 0) return null;
 
   updateAllGuestMemories(store, roomId, currentRound, hostMessage, guestResponses);
@@ -95,7 +119,7 @@ export async function runGuestRound(
     .join("\n\n---\n\n");
 }
 
-// ─── Guest exchange (direct guest-to-guest debate) ──────────────────
+// ─── Guest exchange (direct guest-to-guest debate, sequential) ──────
 
 export async function runGuestExchange(
   store: DebateStore,
@@ -120,12 +144,13 @@ export async function runGuestExchange(
     targetGuestNames.some((name) => g.name.toLowerCase().includes(name.toLowerCase()))
   );
   if (targetGuests.length < 2) {
-    // Fall back to regular guest round if we can't find the targets
     return runGuestRound(store, roomId, hostFraming);
   }
 
-  // Exchange Round 1: Each target guest states their position
-  const round1Promises = targetGuests.map(async (guest) => {
+  // Exchange Round 1: Each target guest states their position (one-by-one)
+  const round1Responses: GuestResult[] = [];
+
+  for (const guest of targetGuests) {
     const guestModel = guest.model || defaultGuestModel;
 
     const msgId = store.addMessage(roomId, {
@@ -147,50 +172,39 @@ export async function runGuestExchange(
       topic: room.topic,
       memory: guest.memory,
       hostFraming,
-      otherGuestResponses: [],
+      otherGuestResponses: round1Responses.map((r) => ({ name: r.guestName, response: r.response })),
       exchangeRound: 1,
       researchContext,
     });
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: hostFraming },
-    ];
+    try {
+      const response = await streamOneGuest(
+        store, roomId, state.apiKey, guestModel, msgId,
+        systemPrompt, hostFraming, state.preferredProviders[guestModel]
+      );
+      round1Responses.push({ guestId: guest.id, guestName: guest.name, response });
+    } catch {
+      // Skip
+    }
+  }
 
-    return new Promise<{ guestId: string; guestName: string; response: string }>(
-      (resolve, reject) => {
-        streamChatCompletion(
-          state.apiKey,
-          guestModel,
-          messages,
-          (chunk) => store.appendToMessage(roomId, msgId, chunk),
-          (fullText) => {
-            store.updateMessage(roomId, msgId, { isStreaming: false });
-            resolve({ guestId: guest.id, guestName: guest.name, response: fullText });
-          },
-          (error) => {
-            store.updateMessage(roomId, msgId, {
-              isStreaming: false,
-              isError: true,
-              content: `Error: ${error.message}`,
-            });
-            reject(error);
-          },
-          state.preferredProviders[guestModel]
-        );
-      }
-    );
-  });
-
-  const round1Responses = await collectGuestResponses(round1Promises);
   if (round1Responses.length < 2) return null;
 
-  // Exchange Round 2: Each guest responds to the OTHER guests' round 1 responses
-  const round2Promises = targetGuests.map(async (guest) => {
+  // Exchange Round 2: Each guest rebuts the others (one-by-one)
+  const round2Responses: GuestResult[] = [];
+
+  for (const guest of targetGuests) {
     const guestModel = guest.model || defaultGuestModel;
-    const othersResponses = round1Responses
+    const othersFromRound1 = round1Responses
       .filter((r) => r.guestId !== guest.id)
       .map((r) => ({ name: r.guestName, response: r.response }));
+
+    // Also include any earlier round-2 rebuttals from other guests
+    const earlierRebuttals = round2Responses
+      .filter((r) => r.guestId !== guest.id)
+      .map((r) => ({ name: r.guestName, response: r.response }));
+
+    const allOtherResponses = [...othersFromRound1, ...earlierRebuttals];
 
     const replyTarget = round1Responses.find((r) => r.guestId !== guest.id);
 
@@ -215,42 +229,23 @@ export async function runGuestExchange(
       topic: room.topic,
       memory: guest.memory,
       hostFraming,
-      otherGuestResponses: othersResponses,
+      otherGuestResponses: allOtherResponses,
       exchangeRound: 2,
       researchContext,
     });
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `Respond to what ${othersResponses.map(o => o.name).join(" and ")} just said.` },
-    ];
+    const userContent = `Respond to what ${othersFromRound1.map(o => o.name).join(" and ")} just said.`;
 
-    return new Promise<{ guestId: string; guestName: string; response: string }>(
-      (resolve, reject) => {
-        streamChatCompletion(
-          state.apiKey,
-          guestModel,
-          messages,
-          (chunk) => store.appendToMessage(roomId, msgId, chunk),
-          (fullText) => {
-            store.updateMessage(roomId, msgId, { isStreaming: false });
-            resolve({ guestId: guest.id, guestName: guest.name, response: fullText });
-          },
-          (error) => {
-            store.updateMessage(roomId, msgId, {
-              isStreaming: false,
-              isError: true,
-              content: `Error: ${error.message}`,
-            });
-            reject(error);
-          },
-          state.preferredProviders[guestModel]
-        );
-      }
-    );
-  });
-
-  const round2Responses = await collectGuestResponses(round2Promises);
+    try {
+      const response = await streamOneGuest(
+        store, roomId, state.apiKey, guestModel, msgId,
+        systemPrompt, userContent, state.preferredProviders[guestModel]
+      );
+      round2Responses.push({ guestId: guest.id, guestName: guest.name, response });
+    } catch {
+      // Skip
+    }
+  }
 
   // Update memories with the full exchange
   const allResponses = [...round1Responses, ...round2Responses];
@@ -318,33 +313,11 @@ export async function runChallengeRound(
     researchContext,
   });
 
-  const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: challenge },
-  ];
-
   try {
-    const response = await new Promise<string>((resolve, reject) => {
-      streamChatCompletion(
-        state.apiKey,
-        guestModel,
-        messages,
-        (chunk) => store.appendToMessage(roomId, msgId, chunk),
-        (fullText) => {
-          store.updateMessage(roomId, msgId, { isStreaming: false });
-          resolve(fullText);
-        },
-        (error) => {
-          store.updateMessage(roomId, msgId, {
-            isStreaming: false,
-            isError: true,
-            content: `Error: ${error.message}`,
-          });
-          reject(error);
-        },
-        state.preferredProviders[guestModel]
-      );
-    });
+    const response = await streamOneGuest(
+      store, roomId, state.apiKey, guestModel, msgId,
+      systemPrompt, challenge, state.preferredProviders[guestModel]
+    );
 
     // Update memory
     let updatedMemory = addToHistory(
@@ -370,7 +343,7 @@ export async function runChallengeRound(
   }
 }
 
-// ─── Deep dive round (guests respond to specific subtopic) ──────────
+// ─── Deep dive round (guests respond one-by-one to subtopic) ────────
 
 export async function runDeepDiveRound(
   store: DebateStore,
@@ -390,7 +363,10 @@ export async function runDeepDiveRound(
   const researchContext = buildResearchContext(store, roomId);
   const currentRound = room.round;
 
-  const guestPromises = room.guests.map(async (guest) => {
+  // Guests speak one-by-one
+  const guestResponses: GuestResult[] = [];
+
+  for (const guest of room.guests) {
     const guestModel = guest.model || defaultGuestModel;
 
     const msgId = store.addMessage(roomId, {
@@ -413,39 +389,20 @@ export async function runDeepDiveRound(
       subtopic,
       hostMessage,
       researchContext,
+      precedingResponses: guestResponses.map((r) => ({ name: r.guestName, response: r.response })),
     });
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: hostMessage },
-    ];
+    try {
+      const response = await streamOneGuest(
+        store, roomId, state.apiKey, guestModel, msgId,
+        systemPrompt, hostMessage, state.preferredProviders[guestModel]
+      );
+      guestResponses.push({ guestId: guest.id, guestName: guest.name, response });
+    } catch {
+      // Skip
+    }
+  }
 
-    return new Promise<{ guestId: string; guestName: string; response: string }>(
-      (resolve, reject) => {
-        streamChatCompletion(
-          state.apiKey,
-          guestModel,
-          messages,
-          (chunk) => store.appendToMessage(roomId, msgId, chunk),
-          (fullText) => {
-            store.updateMessage(roomId, msgId, { isStreaming: false });
-            resolve({ guestId: guest.id, guestName: guest.name, response: fullText });
-          },
-          (error) => {
-            store.updateMessage(roomId, msgId, {
-              isStreaming: false,
-              isError: true,
-              content: `Error: ${error.message}`,
-            });
-            reject(error);
-          },
-          state.preferredProviders[guestModel]
-        );
-      }
-    );
-  });
-
-  const guestResponses = await collectGuestResponses(guestPromises);
   if (guestResponses.length === 0) return null;
 
   updateAllGuestMemories(store, roomId, currentRound, hostMessage, guestResponses);
@@ -468,27 +425,12 @@ function buildResearchContext(store: DebateStore, roomId: string): string | unde
   );
 }
 
-async function collectGuestResponses(
-  promises: Promise<{ guestId: string; guestName: string; response: string }>[]
-): Promise<Array<{ guestId: string; guestName: string; response: string }>> {
-  try {
-    return (await Promise.allSettled(promises))
-      .filter(
-        (r): r is PromiseFulfilledResult<{ guestId: string; guestName: string; response: string }> =>
-          r.status === "fulfilled"
-      )
-      .map((r) => r.value);
-  } catch {
-    return [];
-  }
-}
-
 function updateAllGuestMemories(
   store: DebateStore,
   roomId: string,
   currentRound: number,
   hostMessage: string,
-  guestResponses: Array<{ guestId: string; guestName: string; response: string }>
+  guestResponses: GuestResult[]
 ): void {
   for (const gr of guestResponses) {
     const guest = store.getRoom(roomId)?.guests.find((g) => g.id === gr.guestId);

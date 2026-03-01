@@ -36,7 +36,8 @@ export type MessageIntent =
   | "rebuttal"
   | "challenge_response"
   | "fact_check_result"
-  | "synthesis";
+  | "synthesis"
+  | "round_summary";
 
 export interface Message {
   id: string;
@@ -153,6 +154,8 @@ export type HostAction =
   | "fact_check"
   | "synthesize"
   | "deep_dive"
+  | "call_on"
+  | "end_round"
   | "ask_user"
   | "conclude";
 

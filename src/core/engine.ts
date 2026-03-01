@@ -1,17 +1,246 @@
 import { DebateStore, getStore } from "./store";
-import { runHostDecision, updateHostMemoryBackground } from "./host";
-import { runGuestRound, runGuestExchange, runChallengeRound, runDeepDiveRound } from "./guests";
+import {
+  runHostDecision,
+  runHostMidRoundDecision,
+  runHostPostRoundDecision,
+  generateRoundSummary,
+  updateHostMemoryBackground,
+} from "./host";
+import {
+  runGuestRound,
+  runGuestExchange,
+  runChallengeRound,
+  runSelectiveGuestRound,
+} from "./guests";
 import { runResearchPhase, runFactCheck } from "./research";
 
-// ─── Host Decision Loop ──────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function checkGuestPrereqs(store: DebateStore, roomId: string): boolean {
+  const state = store.getState();
+  const room = store.getRoom(roomId);
+  if (!state.selectedGuestModel || !room?.guests.length) {
+    store.addMessage(roomId, {
+      role: "system",
+      content: !state.selectedGuestModel
+        ? "No guest model selected. Please select a guest model in the Config tab."
+        : "No guests in the room. Add guests in the Guests tab.",
+      isStreaming: false,
+      isSummary: false,
+      isError: true,
+    });
+    store.setPhase(roomId, "AWAITING_USER");
+    return false;
+  }
+  return true;
+}
+
+// ─── Mid-Round Follow-Up Loop ───────────────────────────────────────
+//
+// After all guests speak once, the host decides who speaks next,
+// sets up exchanges, challenges, fact-checks, or ends the round.
+//
+
+const MAX_MID_ROUND_ACTIONS = 6;
+
+async function midRoundLoop(
+  store: DebateStore,
+  roomId: string,
+  roundNumber: number,
+  roundLog: string[]
+): Promise<void> {
+  let midRoundActions = 0;
+
+  while (midRoundActions < MAX_MID_ROUND_ACTIONS) {
+    midRoundActions++;
+
+    // Host decides mid-round action
+    store.setPhase(roomId, "HOST_THINKING");
+    const decision = await runHostMidRoundDecision(
+      store,
+      roomId,
+      roundNumber,
+      roundLog.join("\n\n")
+    );
+
+    // Show host's message
+    store.setPhase(roomId, "HOST_PRESENTING");
+    store.addMessage(roomId, {
+      role: "host",
+      content: decision.message,
+      isStreaming: false,
+      isSummary: false,
+      isError: false,
+      intent: "standard",
+    });
+    roundLog.push(`[Host → ${decision.action}]: ${decision.message}`);
+
+    // End round
+    if (decision.action === "end_round") {
+      return;
+    }
+
+    // Call on specific guests
+    if (decision.action === "call_on") {
+      if (!checkGuestPrereqs(store, roomId)) return;
+
+      const targetNames = decision.target_guests || [];
+      const result = await runSelectiveGuestRound(
+        store,
+        roomId,
+        decision.message,
+        targetNames
+      );
+      if (result) {
+        roundLog.push(`[Called on ${targetNames.join(", ")}]:\n${result}`);
+      }
+      continue;
+    }
+
+    // Exchange between guests
+    if (decision.action === "exchange") {
+      if (!checkGuestPrereqs(store, roomId)) return;
+
+      const targetNames = decision.target_guests || [];
+      const result = await runGuestExchange(
+        store,
+        roomId,
+        decision.message,
+        targetNames
+      );
+      if (result) {
+        roundLog.push(`[Exchange]:\n${result}`);
+      }
+      // Exchanges increase intensity
+      const r = store.getRoom(roomId);
+      if (r) {
+        store.updateDebateIntensity(roomId, Math.min(1, r.debateIntensity + 0.15));
+      }
+      continue;
+    }
+
+    // Challenge a specific guest
+    if (decision.action === "challenge") {
+      if (!checkGuestPrereqs(store, roomId)) return;
+
+      const targetName = decision.target_guests?.[0] || "";
+      const result = await runChallengeRound(
+        store,
+        roomId,
+        decision.message,
+        targetName
+      );
+      if (result) {
+        roundLog.push(`[Challenge → ${targetName}]:\n${result}`);
+      }
+      const r = store.getRoom(roomId);
+      if (r) {
+        store.updateDebateIntensity(roomId, Math.min(1, r.debateIntensity + 0.1));
+      }
+      continue;
+    }
+
+    // Fact check
+    if (decision.action === "fact_check" && decision.claim_to_check) {
+      const result = await runFactCheck(store, roomId, decision.claim_to_check);
+      if (result) {
+        roundLog.push(`[Fact Check — "${decision.claim_to_check}"]:\n${result}`);
+      }
+      continue;
+    }
+
+    // Research mid-round
+    if (decision.action === "research" && decision.research_queries?.length) {
+      const result = await runResearchPhase(store, roomId, decision.research_queries);
+      if (result) {
+        roundLog.push(`[Research]:\n${result}`);
+      }
+      continue;
+    }
+
+    // Unknown action or missing params — end the round
+    return;
+  }
+
+  // Hit max mid-round actions — force end round
+}
+
+// ─── Structured Round ───────────────────────────────────────────────
+//
+// A single structured round:
+//   1. Host opens with a question/prompt → all guests speak once
+//   2. Mid-round follow-ups (host picks who speaks next)
+//   3. Host ends round → generates markdown round summary
+//
+
+async function runStructuredRound(
+  store: DebateStore,
+  roomId: string,
+  hostOpeningMessage: string,
+  roundNumber: number
+): Promise<string> {
+  const roundLog: string[] = [];
+  roundLog.push(`[Host opens round ${roundNumber}]: ${hostOpeningMessage}`);
+
+  // Phase 1: All guests speak once
+  if (!checkGuestPrereqs(store, roomId)) return "";
+
+  const guestResult = await runGuestRound(store, roomId, hostOpeningMessage);
+  if (!guestResult) {
+    return "";
+  }
+  roundLog.push(`[All guests responded]:\n${guestResult}`);
+
+  // Phase 2: Mid-round follow-ups
+  await midRoundLoop(store, roomId, roundNumber, roundLog);
+
+  // Phase 3: Generate round summary
+  store.setPhase(roomId, "HOST_THINKING");
+  const summaryText = await generateRoundSummary(
+    store,
+    roomId,
+    roundNumber,
+    roundLog.join("\n\n")
+  );
+
+  // Display the summary as a special message
+  store.setPhase(roomId, "HOST_PRESENTING");
+  store.addMessage(roomId, {
+    role: "host",
+    content: summaryText,
+    isStreaming: false,
+    isSummary: true,
+    isError: false,
+    intent: "round_summary",
+  });
+
+  // Update host memory with round summary
+  updateHostMemoryBackground(
+    store,
+    roomId,
+    `Round ${roundNumber} completed. Summary: ${summaryText}`
+  );
+
+  // Intensity cools slightly after a round summary
+  const r = store.getRoom(roomId);
+  if (r) {
+    store.updateDebateIntensity(roomId, Math.max(0, r.debateIntensity - 0.05));
+  }
+
+  return summaryText;
+}
+
+// ─── Main Debate Loop ───────────────────────────────────────────────
+//
+// Outer loop: host decides opening action → run round → post-round decision → repeat
+//
 
 interface LoopContext {
   userMessage?: string;
-  guestSummary?: string;
   researchSummary?: string;
 }
 
-async function hostDecisionLoop(
+async function debateLoop(
   store: DebateStore,
   roomId: string,
   context: LoopContext
@@ -19,55 +248,50 @@ async function hostDecisionLoop(
   const room = store.getRoom(roomId);
   if (!room) return;
 
-  const maxIterations = room.config.maxRounds;
-  let iterations = 0;
-  let currentContext = { ...context };
-  const contextLog: string[] = [];
+  const maxRounds = room.config.maxRounds;
+  let roundsCompleted = 0;
+  let pendingResearchSummary = context.researchSummary;
+  let pendingUserMessage = context.userMessage;
 
-  if (context.userMessage) {
-    contextLog.push(`[User]: "${context.userMessage}"`);
-  }
-
-  while (iterations < maxIterations) {
-    iterations++;
-
-    // ── Host decides ──
+  while (roundsCompleted < maxRounds) {
+    // ── Step 1: Host decides the opening action ──
     store.setPhase(roomId, "HOST_THINKING");
 
-    const decision = await runHostDecision(store, roomId, {
-      ...currentContext,
-      accumulatedContext: contextLog.length > 1 ? contextLog.join("\n\n") : undefined,
+    const openingDecision = await runHostDecision(store, roomId, {
+      userMessage: pendingUserMessage,
+      researchSummary: pendingResearchSummary,
     });
 
-    // ── Show host message ──
+    // Show host message
     store.setPhase(roomId, "HOST_PRESENTING");
 
-    const isSummaryAction = decision.action === "ask_user" || decision.action === "conclude";
-    const isSynthesis = decision.action === "synthesize";
+    const isSummaryAction = openingDecision.action === "ask_user" || openingDecision.action === "conclude";
+    const isSynthesis = openingDecision.action === "synthesize";
 
     store.addMessage(roomId, {
       role: "host",
-      content: decision.message,
+      content: openingDecision.message,
       isStreaming: false,
       isSummary: isSummaryAction,
       isError: false,
       intent: isSynthesis ? "synthesis" : "standard",
     });
 
-    contextLog.push(`[Host → ${decision.action}]: ${decision.message}`);
+    // Update host memory
+    const memParts: string[] = [];
+    if (pendingUserMessage) memParts.push(`User: "${pendingUserMessage}"`);
+    if (pendingResearchSummary) memParts.push(`Research: ${pendingResearchSummary}`);
+    memParts.push(`Decision: ${openingDecision.action} — ${openingDecision.message}`);
+    updateHostMemoryBackground(store, roomId, memParts.join(" "));
 
-    // Background: update host memory
-    const parts: string[] = [];
-    if (currentContext.userMessage) parts.push(`User: "${currentContext.userMessage}"`);
-    if (currentContext.guestSummary) parts.push(`Guests: ${currentContext.guestSummary}`);
-    if (currentContext.researchSummary) parts.push(`Research: ${currentContext.researchSummary}`);
-    parts.push(`Decision: ${decision.action} — ${decision.message}`);
-    updateHostMemoryBackground(store, roomId, parts.join(" "));
+    // Clear pending context
+    pendingUserMessage = undefined;
+    pendingResearchSummary = undefined;
 
-    // ── Route based on action ──
+    // ── Route opening action ──
 
-    // Terminal actions: return control to user
-    if (decision.action === "ask_user" || decision.action === "conclude") {
+    // Terminal: return control to user
+    if (openingDecision.action === "ask_user" || openingDecision.action === "conclude") {
       store.setPhase(roomId, "AWAITING_USER");
       const next = store.dequeueUserMessage(roomId);
       if (next) {
@@ -76,168 +300,120 @@ async function hostDecisionLoop(
       return;
     }
 
-    // Synthesize: mid-debate summary, then continue the loop
-    if (decision.action === "synthesize") {
-      // Intensity cools down after synthesis
-      const currentRoom = store.getRoom(roomId);
-      if (currentRoom) {
-        store.updateDebateIntensity(roomId, Math.max(0, currentRoom.debateIntensity - 0.1));
-      }
-      currentContext = {
-        userMessage: undefined,
-        guestSummary: undefined,
-        researchSummary: undefined,
-      };
-      continue;
-    }
-
-    // Research: gather data
-    if (decision.action === "research") {
-      if (decision.research_queries?.length) {
-        const result = await runResearchPhase(store, roomId, decision.research_queries);
-        if (result) {
-          contextLog.push(`[Research]:\n${result}`);
-        }
-        currentContext = {
-          userMessage: undefined,
-          guestSummary: undefined,
-          researchSummary: result || "Research did not return results.",
-        };
-        continue;
-      }
-      store.setPhase(roomId, "AWAITING_USER");
-      return;
-    }
-
-    // Fact check: verify a specific claim
-    if (decision.action === "fact_check") {
-      if (decision.claim_to_check) {
-        const result = await runFactCheck(store, roomId, decision.claim_to_check);
-        if (result) {
-          contextLog.push(`[Fact Check — "${decision.claim_to_check}"]:\n${result}`);
-        }
-        currentContext = {
-          userMessage: undefined,
-          guestSummary: undefined,
-          researchSummary: result
-            ? `Fact check of "${decision.claim_to_check}": ${result}`
-            : "Fact check did not return results.",
-        };
-        continue;
-      }
-      store.setPhase(roomId, "AWAITING_USER");
-      return;
-    }
-
-    // Guest actions require model and guests
-    const state = store.getState();
-    const latestRoom = store.getRoom(roomId);
-    if (!state.selectedGuestModel || !latestRoom?.guests.length) {
-      store.addMessage(roomId, {
-        role: "system",
-        content: !state.selectedGuestModel
-          ? "No guest model selected. Please select a guest model in the Config tab."
-          : "No guests in the room. Add guests in the Guests tab.",
-        isStreaming: false,
-        isSummary: false,
-        isError: true,
-      });
-      store.setPhase(roomId, "AWAITING_USER");
-      return;
-    }
-
-    // Standard guest round: all guests respond
-    if (decision.action === "guests") {
-      const guestResult = await runGuestRound(store, roomId, decision.message);
-      if (!guestResult) {
-        store.setPhase(roomId, "AWAITING_USER");
-        return;
-      }
-
-      contextLog.push(`[Guests]:\n${guestResult}`);
-      currentContext = {
-        userMessage: undefined,
-        guestSummary: guestResult,
-        researchSummary: undefined,
-      };
-      store.incrementRound(roomId);
-      continue;
-    }
-
-    // Exchange: direct guest-to-guest debate
-    if (decision.action === "exchange") {
-      const targetNames = decision.target_guests || [];
-      const exchangeResult = await runGuestExchange(
-        store,
-        roomId,
-        decision.message,
-        targetNames
-      );
-      if (!exchangeResult) {
-        store.setPhase(roomId, "AWAITING_USER");
-        return;
-      }
-
-      contextLog.push(`[Exchange]:\n${exchangeResult}`);
-      currentContext = {
-        userMessage: undefined,
-        guestSummary: exchangeResult,
-        researchSummary: undefined,
-      };
-      store.incrementRound(roomId);
-      continue;
-    }
-
-    // Challenge: host challenges a specific guest
-    if (decision.action === "challenge") {
-      const targetName = decision.target_guests?.[0] || "";
-      const challengeResult = await runChallengeRound(
-        store,
-        roomId,
-        decision.message,
-        targetName
-      );
-      if (!challengeResult) {
-        store.setPhase(roomId, "AWAITING_USER");
-        return;
-      }
-
-      contextLog.push(`[Challenge → ${targetName}]:\n${challengeResult}`);
-      currentContext = {
-        userMessage: undefined,
-        guestSummary: challengeResult,
-        researchSummary: undefined,
-      };
-      // Challenges increase intensity
+    // Synthesize: mid-debate summary, then continue
+    if (openingDecision.action === "synthesize") {
       const r = store.getRoom(roomId);
       if (r) {
-        store.updateDebateIntensity(roomId, Math.min(1, r.debateIntensity + 0.1));
+        store.updateDebateIntensity(roomId, Math.max(0, r.debateIntensity - 0.1));
       }
-      store.incrementRound(roomId);
       continue;
     }
 
-    // Deep dive: focused discussion on a subtopic
-    if (decision.action === "deep_dive") {
-      const subtopic = decision.subtopic || decision.message;
-      const deepDiveResult = await runDeepDiveRound(
+    // Research first (before starting a round)
+    if (openingDecision.action === "research") {
+      if (openingDecision.research_queries?.length) {
+        const result = await runResearchPhase(store, roomId, openingDecision.research_queries);
+        pendingResearchSummary = result || "Research did not return results.";
+      }
+      continue;
+    }
+
+    // Fact check (standalone, before a round)
+    if (openingDecision.action === "fact_check") {
+      if (openingDecision.claim_to_check) {
+        const result = await runFactCheck(store, roomId, openingDecision.claim_to_check);
+        pendingResearchSummary = result
+          ? `Fact check of "${openingDecision.claim_to_check}": ${result}`
+          : "Fact check did not return results.";
+      }
+      continue;
+    }
+
+    // ── Step 2: Run a structured round ──
+    // Actions that lead to a full round: guests, exchange, deep_dive, challenge, call_on
+    if (
+      openingDecision.action === "guests" ||
+      openingDecision.action === "deep_dive" ||
+      openingDecision.action === "exchange" ||
+      openingDecision.action === "challenge" ||
+      openingDecision.action === "call_on"
+    ) {
+      store.incrementRound(roomId);
+      roundsCompleted++;
+
+      const currentRoundNumber = store.getRoom(roomId)?.round ?? roundsCompleted;
+
+      const roundSummary = await runStructuredRound(
         store,
         roomId,
-        decision.message,
-        subtopic
+        openingDecision.message,
+        currentRoundNumber
       );
-      if (!deepDiveResult) {
+
+      if (!roundSummary) {
         store.setPhase(roomId, "AWAITING_USER");
         return;
       }
 
-      contextLog.push(`[Deep Dive — ${subtopic}]:\n${deepDiveResult}`);
-      currentContext = {
-        userMessage: undefined,
-        guestSummary: deepDiveResult,
-        researchSummary: undefined,
-      };
-      store.incrementRound(roomId);
+      // ── Step 3: Post-round decision ──
+      store.setPhase(roomId, "HOST_THINKING");
+
+      // Check for queued user messages
+      const queuedUserMsg = store.dequeueUserMessage(roomId);
+
+      const postDecision = await runHostPostRoundDecision(
+        store,
+        roomId,
+        currentRoundNumber,
+        roundSummary,
+        queuedUserMsg
+      );
+
+      // Route post-round decision
+      if (postDecision.action === "ask_user" || postDecision.action === "conclude") {
+        store.setPhase(roomId, "HOST_PRESENTING");
+        store.addMessage(roomId, {
+          role: "host",
+          content: postDecision.message,
+          isStreaming: false,
+          isSummary: true,
+          isError: false,
+          intent: "standard",
+        });
+        store.setPhase(roomId, "AWAITING_USER");
+        const next = store.dequeueUserMessage(roomId);
+        if (next) {
+          await sendMessage(roomId, next);
+        }
+        return;
+      }
+
+      if (postDecision.action === "research") {
+        if (postDecision.research_queries?.length) {
+          const result = await runResearchPhase(store, roomId, postDecision.research_queries);
+          pendingResearchSummary = result || "Research did not return results.";
+        }
+        // Show the host's transition message
+        store.setPhase(roomId, "HOST_PRESENTING");
+        store.addMessage(roomId, {
+          role: "host",
+          content: postDecision.message,
+          isStreaming: false,
+          isSummary: false,
+          isError: false,
+          intent: "standard",
+        });
+        continue;
+      }
+
+      // "guests" → next round (the default path)
+      if (postDecision.action === "guests") {
+        // The post-round message becomes context for the next opening decision
+        pendingUserMessage = queuedUserMsg;
+        continue;
+      }
+
+      // Fallback: continue to next round
       continue;
     }
 
@@ -246,7 +422,7 @@ async function hostDecisionLoop(
     return;
   }
 
-  // Max iterations
+  // Max rounds reached
   store.addMessage(roomId, {
     role: "system",
     content: "Maximum rounds reached. Returning control to you.",
@@ -267,13 +443,8 @@ export async function initDebate(roomId: string): Promise<void> {
   if (!store.getState().selectedHostModel) return;
 
   store.setPhase(roomId, "HOST_THINKING");
-  store.incrementRound(roomId);
 
-  await hostDecisionLoop(store, roomId, {
-    userMessage: undefined,
-    guestSummary: undefined,
-    researchSummary: undefined,
-  });
+  await debateLoop(store, roomId, {});
 }
 
 export async function sendMessage(roomId: string, userMessage: string): Promise<void> {
@@ -303,13 +474,7 @@ export async function sendMessage(roomId: string, userMessage: string): Promise<
     store.updateGuestMemory(roomId, guest.id, updated);
   }
 
-  store.incrementRound(roomId);
-
-  await hostDecisionLoop(store, roomId, {
-    userMessage,
-    guestSummary: undefined,
-    researchSummary: undefined,
-  });
+  await debateLoop(store, roomId, { userMessage });
 }
 
 // ─── Steering actions (user-initiated mid-debate commands) ──────────
@@ -374,7 +539,7 @@ export function exportTranscript(
     let label = "";
     switch (msg.role) {
       case "host":
-        label = `Host${msg.isSummary ? " (Summary)" : ""}${msg.intent === "synthesis" ? " (Synthesis)" : ""}`;
+        label = `Host${msg.isSummary ? " (Summary)" : ""}${msg.intent === "synthesis" ? " (Synthesis)" : ""}${msg.intent === "round_summary" ? " (Round Summary)" : ""}`;
         break;
       case "guest": {
         const intentLabel = msg.intent === "rebuttal"

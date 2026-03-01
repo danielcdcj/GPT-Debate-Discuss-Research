@@ -76,6 +76,11 @@ const intentStyles: Record<string, { borderColor: string; badge: string; badgeCo
     badge: "Fact Check",
     badgeColor: "bg-yellow-500/15 text-yellow-300",
   },
+  round_summary: {
+    borderColor: "border-amber-500",
+    badge: "Round Summary",
+    badgeColor: "bg-amber-500/15 text-amber-300",
+  },
 };
 
 function formatTimestamp(ts: number): string {

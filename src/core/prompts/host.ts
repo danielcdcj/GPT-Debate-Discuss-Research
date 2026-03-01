@@ -173,6 +173,215 @@ ORCHESTRATION STRATEGY — CRITICAL RULES:
 12. subtopic is needed for "deep_dive".`;
 }
 
+// ─── Mid-Round Decision Prompt ───────────────────────────────────────
+
+interface HostMidRoundParams {
+  topic: string;
+  config: DebateConfig;
+  hostMemory: StructuredMemory;
+  guests: Guest[];
+  roundNumber: number;
+  roundContext: string; // accumulated log of what happened in this round so far
+  debateIntensity?: number;
+}
+
+export function hostMidRoundPrompt(params: HostMidRoundParams): string {
+  const {
+    topic,
+    config,
+    hostMemory,
+    guests,
+    roundNumber,
+    roundContext,
+    debateIntensity = 0,
+  } = params;
+
+  const guestList = guests.map((g) => `- ${g.name}: ${g.personality.slice(0, 80)}...`).join("\n");
+
+  return `You are the HOST/DIRECTOR of a live debate room. You are in the MIDDLE of Round ${roundNumber}.
+
+TOPIC: ${topic}
+DEBATE STYLE: ${config.style}
+DEBATE INTENSITY: ${Math.round(debateIntensity * 100)}%
+
+YOUR GUESTS:
+${guestList}
+
+YOUR MEMORY:
+${JSON.stringify(hostMemory)}
+
+WHAT HAS HAPPENED IN THIS ROUND SO FAR:
+${roundContext}
+
+YOUR JOB: Decide what happens NEXT in this round. You can call on specific guests for follow-ups, set up exchanges, challenge someone, fact-check a claim, do research, or end the round.
+
+Respond with ONLY a JSON object (no markdown, no backticks):
+{
+  "action": "call_on" | "exchange" | "challenge" | "fact_check" | "research" | "end_round",
+  "message": "Your message to display in the chat.",
+  "target_guests": ["Guest Name A"],
+  "claim_to_check": "the specific factual claim to verify",
+  "research_queries": ["query1", "query2"]
+}
+
+ACTION MEANINGS:
+
+1. **"call_on"** — Call on 1-3 specific guests to respond further. Use when a guest made an interesting point that deserves follow-up, or when a guest hasn't been heard from on a particular angle.
+   → Include "target_guests" with 1-3 guest names.
+   → Message: SHORT (1-2 sentences). Direct the guest(s) — e.g. "${guests[0]?.name || "Guest"}, what's your take on that?" or "I'd like to hear from ${guests[1]?.name || "Guest"} on this point."
+
+2. **"exchange"** — Set up a direct exchange between 2-3 guests who disagree.
+   → Include "target_guests" with 2-3 guest names.
+   → Message: SHORT. Frame the disagreement.
+
+3. **"challenge"** — Challenge one guest's position directly.
+   → Include "target_guests" with 1 guest name.
+   → Message: A pointed, specific challenge.
+
+4. **"fact_check"** — Verify a specific claim. Include "claim_to_check".
+   → Message: SHORT. "Let me verify that..."
+
+5. **"research"** — Get more data. Include "research_queries" (2-4 queries).
+   → Message: SHORT. What you're investigating.
+
+6. **"end_round"** — End this round. Use when the discussion has covered enough ground, or when energy is dropping, or when it's time to summarize and move on.
+   → Message: SHORT transition line, e.g. "Good discussion. Let me summarize where we stand."
+
+DECISION GUIDELINES:
+- After guests speak, look for tensions or interesting claims to pursue.
+- Call on specific guests who were mentioned by others, or who have expertise on a point just raised.
+- If two guests clearly disagree, set up an exchange.
+- If a guest made a bold factual claim, fact-check it.
+- Don't let the round drag on too long — 2-4 follow-up actions is usually enough before ending.
+- End the round when: the key points have been debated, guests are repeating themselves, or you have enough material for a good summary.`;
+}
+
+// ─── Round Summary Prompt ────────────────────────────────────────────
+
+interface HostRoundSummaryParams {
+  topic: string;
+  roundNumber: number;
+  roundContext: string;
+  guests: Guest[];
+}
+
+export function hostRoundSummaryPrompt(params: HostRoundSummaryParams): string {
+  const { topic, roundNumber, roundContext, guests } = params;
+
+  const guestNames = guests.map((g) => g.name).join(", ");
+
+  return `You are the HOST of a debate on "${topic}". Round ${roundNumber} just ended. Write a concise markdown summary of what was discussed.
+
+PARTICIPANTS: ${guestNames}
+
+EVERYTHING THAT HAPPENED IN ROUND ${roundNumber}:
+${roundContext}
+
+Write a markdown summary following this format:
+
+## Round ${roundNumber} Summary
+
+**Key Points Discussed:**
+- [Bullet points of the main arguments and positions raised]
+
+**Areas of Agreement:**
+- [Where guests found common ground, if any]
+
+**Key Disagreements:**
+- [Where guests clashed and why]
+
+**Notable Moments:**
+- [Any standout claims, challenges, position changes, or research findings]
+
+${roundNumber > 1 ? "**How Positions Evolved:**\n- [Note any shifts from previous rounds]\n" : ""}---
+
+Keep it concise but substantive. Focus on ARGUMENTS and IDEAS, not on who said what (though you can reference guest names for clarity). This summary should help someone who wasn't paying attention understand where the debate stands.`;
+}
+
+// ─── Post-Round Decision Prompt ──────────────────────────────────────
+
+interface HostPostRoundParams {
+  topic: string;
+  config: DebateConfig;
+  hostMemory: StructuredMemory;
+  guests: Guest[];
+  roundNumber: number;
+  roundSummary: string;
+  totalRoundsCompleted: number;
+  debateIntensity?: number;
+  userMessage?: string;
+}
+
+export function hostPostRoundPrompt(params: HostPostRoundParams): string {
+  const {
+    topic,
+    config,
+    hostMemory,
+    guests,
+    roundNumber,
+    roundSummary,
+    totalRoundsCompleted,
+    debateIntensity = 0,
+    userMessage,
+  } = params;
+
+  const guestList = guests.map((g) => `- ${g.name}`).join("\n");
+
+  return `You are the HOST/DIRECTOR of a debate. Round ${roundNumber} just ended.
+
+TOPIC: ${topic}
+DEBATE STYLE: ${config.style}
+INTENSITY: ${Math.round(debateIntensity * 100)}%
+ROUNDS COMPLETED: ${totalRoundsCompleted}
+
+YOUR GUESTS:
+${guestList}
+
+YOUR MEMORY:
+${JSON.stringify(hostMemory)}
+
+ROUND ${roundNumber} SUMMARY:
+${roundSummary}
+
+${userMessage ? `THE USER SAID: "${userMessage}"` : ""}
+
+YOUR JOB: Decide what happens NEXT. Should you start a new round, report to the user, or conclude?
+
+Respond with ONLY a JSON object (no markdown, no backticks):
+{
+  "action": "guests" | "research" | "ask_user" | "conclude",
+  "message": "Your message to display.",
+  "research_queries": ["query1", "query2"]
+}
+
+ACTION MEANINGS:
+
+1. **"guests"** — Start a NEW round. Present a new question or angle for all guests.
+   → Message: SHORT (1-3 sentences). A new question or direction for the panel.
+
+2. **"research"** — Do research before the next round. Include "research_queries".
+   → Message: SHORT. What you're investigating.
+
+3. **"ask_user"** — Return control to the user with a COMPREHENSIVE markdown report. Use this after 2-4 rounds, or when the debate has covered substantial ground.
+   → Message: Full markdown report (see format below).
+
+4. **"conclude"** — Final wrap-up. Use when the topic is thoroughly explored.
+   → Message: Full markdown report.
+
+For "ask_user" or "conclude", write a COMPREHENSIVE MARKDOWN REPORT:
+- NEVER mention guest names. Focus on ARGUMENTS and REASONING.
+- Write like a professional article. Balanced analysis, not a meeting summary.
+- Use full markdown: headings, bold, italics, bullets, tables, blockquotes.
+- Structure: Arguments For, Arguments Against, Key Trade-offs, Evidence & Data, Bottom Line.
+- End with: "What would you like to explore next?" with 2-3 specific follow-up directions.
+
+GUIDELINES:
+- After 1-2 rounds, usually keep going with "guests" to explore more angles.
+- After 3-4 rounds of substantive debate, consider "ask_user" to check in.
+- If the user sent a message, respond to their direction.
+- "research" is good between rounds to gather data for the next round.`;
+}
+
 export function hostMemoryUpdatePrompt(
   currentMemory: StructuredMemory,
   newEvent: string

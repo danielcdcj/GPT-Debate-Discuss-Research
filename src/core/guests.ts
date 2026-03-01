@@ -412,6 +412,80 @@ export async function runDeepDiveRound(
     .join("\n\n---\n\n");
 }
 
+// ─── Selective guest round (call on specific guests mid-round) ───────
+
+export async function runSelectiveGuestRound(
+  store: DebateStore,
+  roomId: string,
+  hostMessage: string,
+  targetGuestNames: string[]
+): Promise<string | null> {
+  const state = store.getState();
+  const room = store.getRoom(roomId);
+  if (!room) return null;
+
+  const defaultGuestModel = state.selectedGuestModel;
+  if (!defaultGuestModel) return null;
+
+  store.setPhase(roomId, "GUESTS_RESPONDING");
+
+  const researchContext = buildResearchContext(store, roomId);
+  const currentRound = room.round;
+
+  // Find the target guests by name
+  const targetGuests = room.guests.filter((g) =>
+    targetGuestNames.some((name) => g.name.toLowerCase().includes(name.toLowerCase()))
+  );
+
+  if (targetGuests.length === 0) return null;
+
+  const guestResponses: GuestResult[] = [];
+
+  for (const guest of targetGuests) {
+    const guestModel = guest.model || defaultGuestModel;
+
+    const msgId = store.addMessage(roomId, {
+      role: "guest",
+      content: "",
+      guestId: guest.id,
+      guestName: guest.name,
+      guestAvatar: guest.avatar,
+      isStreaming: true,
+      isSummary: false,
+      isError: false,
+      intent: "standard",
+    });
+
+    const systemPrompt = guestResponsePrompt({
+      guestName: guest.name,
+      personality: guest.personality,
+      topic: room.topic,
+      memory: guest.memory,
+      hostMessage,
+      researchContext,
+      precedingResponses: guestResponses.map((r) => ({ name: r.guestName, response: r.response })),
+    });
+
+    try {
+      const response = await streamOneGuest(
+        store, roomId, state.apiKey, guestModel, msgId,
+        systemPrompt, hostMessage, state.preferredProviders[guestModel]
+      );
+      guestResponses.push({ guestId: guest.id, guestName: guest.name, response });
+    } catch {
+      // Skip this guest
+    }
+  }
+
+  if (guestResponses.length === 0) return null;
+
+  updateAllGuestMemories(store, roomId, currentRound, hostMessage, guestResponses);
+
+  return guestResponses
+    .map((g) => `${g.guestName}: ${g.response}`)
+    .join("\n\n---\n\n");
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 function buildResearchContext(store: DebateStore, roomId: string): string | undefined {

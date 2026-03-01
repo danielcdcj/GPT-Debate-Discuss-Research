@@ -96,6 +96,8 @@ export function ModelSelector({ label, value, onChange }: ModelSelectorProps) {
                 {selectedModel.id}
               </span>
             </div>
+          ) : value ? (
+            <span className="text-slate-300 truncate">{value}</span>
           ) : (
             <span className="text-slate-500">Select a model...</span>
           )}

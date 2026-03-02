@@ -56,7 +56,8 @@ export async function chatCompletion(
   model: string,
   messages: ChatMessage[],
   jsonMode = false,
-  providerOrder?: string[]
+  providerOrder?: string[],
+  timeoutMs = 60_000
 ): Promise<string> {
   const body: Record<string, unknown> = { model, messages };
 
@@ -68,23 +69,36 @@ export async function chatCompletion(
     body.provider = { order: providerOrder, allow_fallbacks: true };
   }
 
-  const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": typeof window !== "undefined" ? window.location.origin : "",
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "Unknown error");
-    throw new Error(`API error ${res.status}: ${errText}`);
+  try {
+    const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": typeof window !== "undefined" ? window.location.origin : "",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "Unknown error");
+      throw new Error(`API error ${res.status}: ${errText}`);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || "";
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s. The API may be unreachable.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content || "";
 }
 
 // ─── Stream Chat Completion ──────────────────────────────────────────
@@ -97,12 +111,15 @@ export function streamChatCompletion(
   onDone: (fullText: string) => void,
   onError: (error: Error) => void,
   providerOrder?: string[]
-): void {
+): AbortController {
   const body: Record<string, unknown> = { model, messages, stream: true };
 
   if (providerOrder?.length) {
     body.provider = { order: providerOrder, allow_fallbacks: true };
   }
+
+  const controller = new AbortController();
+  const connectTimer = setTimeout(() => controller.abort(), 60_000);
 
   fetch(`${OPENROUTER_BASE}/chat/completions`, {
     method: "POST",
@@ -112,8 +129,11 @@ export function streamChatCompletion(
       "HTTP-Referer": typeof window !== "undefined" ? window.location.origin : "",
     },
     body: JSON.stringify(body),
+    signal: controller.signal,
   })
     .then(async (res) => {
+      clearTimeout(connectTimer); // connection established, cancel connect timeout
+
       if (!res.ok) {
         const errText = await res.text().catch(() => "Unknown error");
         throw new Error(`API error ${res.status}: ${errText}`);
@@ -156,5 +176,14 @@ export function streamChatCompletion(
 
       onDone(fullText);
     })
-    .catch(onError);
+    .catch((err) => {
+      clearTimeout(connectTimer);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        onError(new Error("Request timed out. The API may be unreachable."));
+      } else {
+        onError(err);
+      }
+    });
+
+  return controller;
 }

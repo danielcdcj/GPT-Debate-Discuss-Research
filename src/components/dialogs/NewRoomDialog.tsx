@@ -316,6 +316,7 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
                 <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:300ms]" />
               </div>
               <p className="text-sm text-slate-400">Generating diverse panelists...</p>
+              <p className="text-xs text-slate-500 mt-1">This may take up to 60 seconds</p>
             </div>
           )}
 
@@ -408,7 +409,7 @@ export function NewRoomDialog({ isOpen, onClose }: NewRoomDialogProps) {
 
           {/* Actions */}
           <div className="flex justify-between gap-3 pt-2">
-            <Button variant="ghost" onClick={handleBack} disabled={isGenerating || isStarting}>
+            <Button variant="ghost" onClick={handleBack} disabled={isStarting}>
               Back
             </Button>
             <div className="flex gap-3">

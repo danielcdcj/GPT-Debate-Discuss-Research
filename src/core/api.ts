@@ -103,6 +103,9 @@ export async function chatCompletion(
 
 // ─── Stream Chat Completion ──────────────────────────────────────────
 
+const STREAM_CONNECT_TIMEOUT = 60_000; // 60s to establish connection
+const STREAM_IDLE_TIMEOUT = 30_000;    // 30s max silence between chunks
+
 export function streamChatCompletion(
   apiKey: string,
   model: string,
@@ -119,7 +122,7 @@ export function streamChatCompletion(
   }
 
   const controller = new AbortController();
-  const connectTimer = setTimeout(() => controller.abort(), 60_000);
+  const connectTimer = setTimeout(() => controller.abort(), STREAM_CONNECT_TIMEOUT);
 
   fetch(`${OPENROUTER_BASE}/chat/completions`, {
     method: "POST",
@@ -146,32 +149,45 @@ export function streamChatCompletion(
       let fullText = "";
       let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      // Idle timer: resets on every chunk, aborts if stream stalls
+      let idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT);
+      const resetIdle = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT);
+      };
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data: ")) continue;
+          resetIdle(); // got data, reset the idle clock
 
-          const payload = trimmed.slice(6);
-          if (payload === "[DONE]") continue;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
 
-          try {
-            const parsed = JSON.parse(payload);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              fullText += delta;
-              onChunk(delta);
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+            const payload = trimmed.slice(6);
+            if (payload === "[DONE]") continue;
+
+            try {
+              const parsed = JSON.parse(payload);
+              const delta = parsed.choices?.[0]?.delta?.content;
+              if (delta) {
+                fullText += delta;
+                onChunk(delta);
+              }
+            } catch {
+              // skip malformed chunks
             }
-          } catch {
-            // skip malformed chunks
           }
         }
+      } finally {
+        clearTimeout(idleTimer);
       }
 
       onDone(fullText);
@@ -179,7 +195,7 @@ export function streamChatCompletion(
     .catch((err) => {
       clearTimeout(connectTimer);
       if (err instanceof DOMException && err.name === "AbortError") {
-        onError(new Error("Request timed out. The API may be unreachable."));
+        onError(new Error("Stream timed out — no data received. The API may be stalled or unreachable."));
       } else {
         onError(err);
       }
